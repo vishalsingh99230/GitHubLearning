@@ -1,0 +1,17 @@
+{
+  "name": "local_gitfile",
+  "version": "1.0.0",
+  "main": "objectOrientedProgramming.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "mongodb": "^6.6.2",
+    "pdf-node": "^1.0.1"
+  },
+  "description": ""
+}

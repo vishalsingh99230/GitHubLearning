@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Salon Booking App</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <h1>Salon Booking App</h1>
+    </header>
+    <main>
+        <!-- Appointment Booking Section -->
+        <section id="appointment">
+            <h2>Book an Appointment</h2>
+            <!-- Form for appointment booking -->
+            <form id="appointmentForm">
+                <label for="name">Name:</label>
+                <input type="text" id="name" name="name" required>
+                <!-- Add more form fields as needed -->
+                <button type="submit">Book Appointment</button>
+            </form>
+        </section>
+        <!-- Store Selection Section -->
+        <section id="store">
+            <h2>Select a Store</h2>
+            <!-- Store selection options -->
+            <select id="storeSelect" name="store">
+                <option value="store1">Store 1</option>
+                <option value="store2">Store 2</option>
+                <!-- Add more options based on locations -->
+            </select>
+        </section>
+        <!-- Product Selection Section -->
+        <section id="products">
+            <h2>Select Products</h2>
+            <!-- Checkboxes for product selection -->
+            <input type="checkbox" id="hairColor" name="hairColor">
+            <label for="hairColor">Hair Colour</label><br>
+            <input type="checkbox" id="hairSpa" name="hairSpa">
+            <label for="hairSpa">Hair Spa</label><br>
+            <!-- Add more products -->
+        </section>
+    </main>
+    <footer>
+        <p>&copy; 2024 Salon Booking App</p>
+    </footer>
+</body>
+</html>

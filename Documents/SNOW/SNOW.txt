@@ -1,0 +1,2668 @@
+=========MF Outbound========
+
+
+
+field Mapper
+
+(function execute(inputs, outputs) {
+// ... code ...
+
+// ... code ...
+var dataObj = {};
+
+	var tableKeys = "";
+	var clientValue = '';
+	var req_sys_id = inputs.sr.sys_id.toString();
+	var req = new GlideRecord('sc_req_item');
+	req.get(req_sys_id);
+	var persistent_id = req.correlation_id;
+	var mappingTable = new GlideAggregate('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+	mappingTable.addQuery('u_table_name', 'sc_req_item');
+	mappingTable.addQuery('u_project_name', req.u_dco_project_name);
+	mappingTable.groupBy('u_cms_field');
+	mappingTable.addAggregate('COUNT');
+	mappingTable.query();
+	while (mappingTable.next()) {
+		 
+		 var tableKeys = mappingTable.getValue('u_cms_field');
+		 var getFieldsData = new GlideRecord('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+		getFieldsData.addQuery('u_table_name', 'sc_req_item');
+		getFieldsData.addQuery('u_project_name', req.u_dco_project_name);
+        getFieldsData.addQuery('u_cms_field', tableKeys);	
+		if(req[tableKeys]){
+			//gs.info("Record Key: "+tableKeys+" Value: "+req[tableKeys]);
+				cmsTabKey = req[tableKeys] + '';  
+			
+		}
+		else{   		 
+			cmsTabKey = questTable(tableKeys);    
+		}
+		if(tableKeys == "preferred_contact_method"){
+			getFieldsData.addQuery('u_cms_field_value_c2d', cmsTabKey); 
+		}
+		else{
+			getFieldsData.addQuery('u_cms_field_value', cmsTabKey); 
+		}
+		getFieldsData.query();
+		if(getFieldsData.next()){
+			if(getFieldsData.u_client_field_choice_value.toString()){
+				clientValue = getFieldsData.u_client_field_choice_value.toString();    
+			}
+			else {
+				clientValue = cmsTabKey;	
+			}
+			if(tableKeys == "state" || tableKeys == "substatus"){
+				if(typeof(persistent_id) !== "undefined" && persistent_id !== ""){
+			dataObj[getFieldsData.u_client_field_name.toString()] = clientValue;
+			gs.info("OBJ"+tableKeys+ "Client Value" +clientValue+"SIndhu"+getFieldsData.u_client_field_name.toString()+"Value "+getFieldsData.u_client_field_choice_value.toString());
+			}
+			}
+			else if(tableKeys == "hold_type"){
+				if(persistent_id)
+				{
+					dataObj[getFieldsData.u_client_field_name.toString()] = clientValue;
+				}
+
+			}
+			else dataObj[getFieldsData.u_client_field_name.toString()] = clientValue;
+		}
+	}
+	function questTable(tableKeys){
+	var reqVar = new GlideRecord('sc_item_option_mtom');  
+        reqVar.addEncodedQuery('request_item='+req_sys_id+'^sc_item_option.item_option_new.name='+ tableKeys);
+        
+		    reqVar.query();
+           // gs.info("Extra Vars Table Key"+tableKeys+"Value:"reqVar.getRowCount());
+	if(reqVar.next()){
+        gs.info("Extra Vars Table Key"+tableKeys+"Value:"+reqVar.sc_item_option.value);
+		if(reqVar.sc_item_option.value != ""){
+			if(tableKeys == 'incident_area'){
+				var areaVal = reqVar.sc_item_option.value + '';
+				var grArea = new GlideRecord('u_mf_incident_area');
+				grArea.addQuery('sys_id',areaVal);
+				grArea.query();
+				if(grArea.next()){
+					return cmsValue = grArea.u_persistent_id + '';
+				}
+			}
+			
+			else{
+				return cmsValue = reqVar.sc_item_option.value + '';
+			}
+		}
+			}
+	
+	
+}
+	gs.info(JSON.stringify(dataObj));
+
+	
+	outputs.dataobj = dataObj;
+       
+       
+})(inputs, outputs);
+
+
+
+
+
+===========Denormalization==========
+
+
+(function execute(inputs, outputs) {
+	//code
+    //gs.info("MF Denorm : "+JSON.stringify(inputs.cmspayload));
+	//var parsedPayload = JSON.parse(inputs.cmspayload);
+	var parsedPayload = inputs.cmspayload;
+    //gs.info("MF Denorm : "+parsedPayload);
+	var project_id = inputs.project_id;
+	var obj = {};
+	var enumFields = ['active','z_bug','z_COVID19','urgency','priority','impact'];
+	var referencefields = ['z_FCR','call_back_date','z_golive','major_incident','z_alt_callback_grp','z_hold_type','affected_resource','category','zreporting_method','z_request_type','requested_by','z_classification','z_proj_start_date','resolution_code','resolution_method','status','z_location','z_tkt_pref_cnt_meth','customer'];
+	
+	for (var key in parsedPayload){
+		//Check if we can get the corresponding clientkey from mapping table
+		var getFieldsData = new GlideRecord('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+		getFieldsData.addQuery('u_table_name', 'incident');
+		getFieldsData.addQuery('u_project_name', project_id);
+		getFieldsData.addQuery('u_client_field_name',key);
+		getFieldsData.addQuery('u_client_field_choice_value',parsedPayload[key]);
+		getFieldsData.query();
+		if(getFieldsData.next()){
+        
+			//var clientValue = parsedPayload[getFieldsData.u_client_field_choice_value];
+			var clientKey = getFieldsData.u_client_field_name.toString();
+			var clientValue = parsedPayload[clientKey];
+			if(clientValue!=""){
+				if(referencefields.indexOf(key) > -1){
+					obj[clientKey] = {
+						"relAttrField" : clientValue
+					};
+				}
+				else if(enumFields.indexOf(key) > -1){
+					obj[clientKey] = {
+						"relAttrField" : clientValue
+					};
+				}
+				else if(key == "priority" || key == "urgency" || key == "impact"){
+					//Do Nothing We are building this statically Below
+				}
+				else {
+					obj[clientKey] = clientValue;
+				}
+			}
+		}
+	}
+	//Handle Priority
+	var incPriority = inputs.inc.priority + '';
+	if (incPriority == '1') {
+		obj['urgency'] = {
+			"relAttrField" : 0
+		};
+		obj['impact'] = {
+			"relAttrField" : 5
+		};
+		obj['priority'] = {
+			"relAttrField" : 5
+		};
+	} else if (incPriority == '2') {
+		obj['urgency'] = {
+			"relAttrField" : 1
+		};
+		obj['impact'] = {
+			"relAttrField" : 4
+		};
+		obj['priority'] = {
+			"relAttrField" : 4
+		};
+	} else if (incPriority == '3') {
+		obj['urgency'] = {
+			"relAttrField" : 2
+		};
+		obj['impact'] = {
+			"relAttrField" : 3
+		};
+		obj['priority'] = {
+			"relAttrField" : 3
+		};
+	} else if (incPriority == '4') {
+		obj['urgency'] = {
+			"relAttrField" : 3
+		};
+		obj['impact'] = {
+			"relAttrField" : 2
+		};
+		obj['priority'] = {
+			"relAttrField" : 2
+		};
+	} else if (incPriority == '5') {
+		obj['urgency'] = {
+			"relAttrField" : 3
+		};
+		obj['impact'] = {
+			"relAttrField" : 2
+		};
+		obj['priority'] = {
+			"relAttrField" : 2
+		};
+	}
+	//Handle Extra Vars
+	var extravars = gs.getProperty('sn_sforce_v2_spoke.mf_extra_vars');
+	extravars = JSON.parse(extravars);
+	extravars['substatus'] = 'status';
+	for(exvar in extravars){
+		var incextraVars = new GlideRecord('question_answer');
+		incextraVars.addEncodedQuery('table_name=incident^table_sys_id='+ inputs.inc.sys_id +"^question.name="+ exvar);
+		incextraVars.query();
+		if(incextraVars.next()){
+			if(incextraVars.value != ""){
+				var x = incextraVars.value + '';
+				    if(extravars[exvar] != 'type'){
+				if(x == 'true'){
+					x = '1';
+				}
+				else if(x == 'false'){
+					x = '0';
+				}
+					}
+				if(referencefields.indexOf(extravars[exvar]) > -1){
+					if(exvar == 'requestor' || exvar == 'requested_by'){
+						obj['requested_by'] = {
+							"relAttrField" : getUserCorId(incextraVars.value)
+						};
+					}
+					else if(exvar == 'callback_group'){
+						obj['z_alt_callback_grp'] = {
+							"relAttrField" : getGroupCorId(incextraVars.value)
+						};
+					}
+					else if(exvar == 'call_back_date'){
+						obj['call_back_date'] = convertDateToEpoch(incextraVars.value)
+					}
+					else if (exvar == "preferred_contact_method"){
+						//Do Nothing as Value is already set
+					}
+					else if (exvar == "location"){
+                        
+						obj['z_loaction'] = {
+							 "relAttrField" : getLocation(incextraVars.value)};
+					}
+					else if(exvar == 'affected_end_user'){
+						obj['customer'] = {
+							"relAttrField" : getUserCorId(incextraVars.value)
+						};
+					}
+					else{
+							obj[extravars[exvar]] = {
+								"relAttrField" : x
+							};
+					}
+				}
+				else if(enumFields.indexOf(extravars[exvar]) > -1){
+					obj[extravars[exvar]] = {
+						"relAttrField" : x
+					};
+				}
+				else if(exvar == 'convert_ticket' && x == "true"){
+                    obj[extravars[exvar]] = {
+								"relAttrField" : "I"
+							};
+                }
+                else if(exvar == 'convert_ticket' && x == "false"){
+                    //Do nothing
+                }
+				else{
+					obj[extravars[exvar]] = x;
+				}
+			}	
+		}
+	}
+	//Handle The Keys which are not in mapping Table and Map manually
+	var affected_resource = inputs.inc.cmdb_ci.correlation_id + '';
+	affected_resource = checkKey(affected_resource);
+	var z_snow_sys_id = inputs.inc.sys_id + '';
+	var z_snow_ritm = inputs.inc.number + '';
+	//Priority Handling
+	//Check if Create or Update
+	var persistant_id = inputs.inc.correlation_id + '';
+	var group = inputs.inc.assignment_group.u_correlation_id + '';
+	var assignee = inputs.inc.assigned_to.u_correlation_id + '';
+	if(persistant_id != "" && persistant_id !="undefined"){
+		//Update
+		obj['group'] = {
+	  		"relAttrField" : group ? group : ""
+		};
+		obj['assignee'] = {
+	  		"relAttrField" : assignee ? assignee : ""
+		};
+	}
+	else{
+		//Create
+		obj['group'] = {
+	  		"relAttrField" : group ? group : ""
+		};
+	}
+	obj['status_comment_f'] = "1";
+	obj['z_snow_sys_id'] = z_snow_sys_id;
+	obj['z_snow_ritm'] = z_snow_ritm;
+	obj['description'] = inputs.inc.description + '';
+	obj['summary'] = inputs.inc.short_description + '';
+	obj['affected_resource'] = {
+	  "relAttrField" : affected_resource ? affected_resource : ""
+	};
+
+	function getLocation(id){
+     var getLoc = new GlideRecord('cmn_location');
+		getLoc.addQuery('sys_id',id);
+		getLoc.setLimit('1');
+		getLoc.query();
+		if(getLoc.next()){
+			return getLoc.u_correlation_id + ''
+		}
+		return "";
+
+	}
+	function getGroupCorId(id){
+		var grgrp = new GlideRecord('sys_user_group');
+		grgrp.addQuery('sys_id',id);
+		grgrp.setLimit('1');
+		grgrp.query();
+		if(grgrp.next()){
+			return grgrp.u_correlation_id + ''
+		}
+		return "";
+	}
+	function getUserCorId(id){
+		var grUser = new GlideRecord('u_mf_contacts');
+		grUser.addQuery('sys_id',id);
+		grUser.setLimit('1');
+		grUser.query();
+		if(grUser.next()){
+			return grUser.u_correlation_id + ''
+		}
+		return "";
+
+	}
+	function checkKey(key){
+        if(key != "" && key !="undefined"){
+			
+            return key;
+        }
+        return "";
+    }
+	function convertDateToEpoch(vDate){
+		epoch = '';
+		vDateTmp = new GlideDateTime(vDate);
+		vDateTmp.addSeconds(60); 
+		var epochValue = vDateTmp.getNumericValue() / 1000;
+		epoch = (Math.round((epochValue *Math.pow(10,0)).toFixed(0-1))/Math.pow(10,0)).toFixed(0);
+		return epoch;
+	}
+	outputs.outputpayload = obj;  
+})(inputs, outputs);
+
+
+========MF Create Record 
+(function execute(inputs, outputs) {
+//Parsing the output and updating our record with Client Number and sysID
+ var res = JSON.parse(inputs.res);
+ gs.info('Montefiore  Body ' + JSON.stringify(inputs.res));
+ if(inputs.status == "201"){
+    outputs.correlation_id = res['persistent_id'].toString();
+    outputs.source_ref_number = res['ref_num'].toString();
+   }
+})(inputs, outputs);
+
+
+========MapperUtils==================
+
+
+var CMSMapperUtils = Class.create();
+CMSMapperUtils.prototype = {
+    initialize: function() {},
+    deloitteMapperForIncident: function(incomingObj, table, project_key) {
+        var payload = JSON.parse(incomingObj);
+        //Get Project ID
+        var project_id = "";
+        var getprojectID = new GlideRecord('u_dco_projects');
+        getprojectID.addQuery("u_number", project_key);
+        getprojectID.query();
+        if (getprojectID.next()) {
+            project_id = getprojectID.sys_id + '';
+        }
+        var dataobj = {};
+        for (key in payload) {
+            var client_value = payload[key];
+            var getFieldsData = new GlideRecord('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+            getFieldsData.addQuery('u_project_name', project_id);
+            getFieldsData.addQuery('u_table_name', table);
+            getFieldsData.addQuery('u_cms_field', key);
+            getFieldsData.addQuery('u_client_field_choice_value', client_value);
+            getFieldsData.query();
+            //gs.info("Montefiere Ebonding INC Key" + key + "Client Value" + client_value);
+            if (getFieldsData.next()) {
+                //Handle Dependent fields
+                if (getFieldsData.u_cms_field == 'priority' || getFieldsData.u_cms_field == 'impact' || getFieldsData.u_cms_field == 'urgency') {
+                    var priorityKey = 'priority';
+                    if (payload[priorityKey] == '5') {
+                        dataobj['urgency'] = '1';
+                        dataobj['impact'] = 1;
+                        dataobj['priority'] = 1;
+                    } else if (payload[priorityKey] == '4') {
+                        dataobj['urgency'] = '2';
+                        dataobj['impact'] = '1';
+                        dataobj['priority'] = '2';
+                    } else if (payload[priorityKey] == '3') {
+                        dataobj['urgency'] = '2';
+                        dataobj['impact'] = '2';
+                        dataobj['priority'] = '3';
+                    } else if (payload[priorityKey] == '2') {
+                        dataobj['urgency'] = '2';
+                        dataobj['impact'] = '3';
+                        dataobj['priority'] = '4';
+                    } else if (payload[priorityKey] == '1') {
+                        dataobj['urgency'] = '3';
+                        dataobj['impact'] = '3';
+                        dataobj['priority'] = '5';
+                    }
+                } else if (getFieldsData.u_dependent_field_required == true) {
+                    var dependentField = getFieldsData.u_dependent_field + '';
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                    dataobj[dependentField] = getFieldsData.u_deloitte_dependent_value.toString();
+                } else {
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                }
+
+            } else if (key == "affected_end_user" || key == "requestor" || key == "assigned_to") {
+                var mf_cont = new GlideRecord("u_mf_contacts");
+                mf_cont.addQuery("u_correlation_id", client_value);
+                mf_cont.query();
+                if (mf_cont.next()) {
+                    var mf_cont_sys = mf_cont.sys_id.toString();
+                    dataobj[key] = mf_cont_sys.toString();
+                }
+            } else if (key == "location") {
+
+                var getLoc = new GlideRecord("cmn_location");
+                getLoc.addQuery("u_correlation_id", client_value);
+                getLoc.query();
+                if (getLoc.next()) {
+
+                    var sysID = getLoc.sys_id.toString();
+                    dataobj[key] = sysID;
+                }
+            } else if (key == "major_incident" || key == "go_live" || key == "fcr") {
+                if (payload[key] == "1") {
+                    dataobj[key] = true;
+                } else {
+                    dataobj[key] = false;
+                }
+            } else if (key == "call_back_date") {
+                var epcoh = client_value;
+                var gdt = new GlideDateTime();
+                gdt.setNumericValue(epcoh * 1000);
+                dataobj[key] = gdt.toString();
+            } else if (key == "callback_group" || key == "assignment_group") {
+                var mf_group = new GlideRecord("sys_user_group");
+                mf_group.addQuery("u_correlation_id", client_value);
+                mf_group.query();
+                if (mf_group.next()) {
+                    var mf_grp_sys = mf_group.sys_id;
+                    dataobj[key] = mf_grp_sys.toString();
+                }
+            } else if (key == "cmdb_ci" || key == "ci") {
+                var ci = new GlideRecord("cmdb_ci");
+                ci.addQuery("correlation_id", client_value);
+                ci.query();
+                if (ci.next()) {
+                    var ci_sysID = ci.sys_id.toString();
+                    dataobj[key] = ci_sysID.toString();
+                    //dataobj['ci'] = ci_sysID.toString();
+                }
+            } else if (key == "parent_incident") {
+                var inc = new GlideRecord('incident');
+                inc.addQuery('correlation_id', client_value);
+                inc.query();
+                if (inc.next()) {
+                    dataobj[key] = inc.sys_id.toString();
+                }
+            } else {
+                dataobj[key] = payload[key];
+            }
+        }
+        dataobj['project_id'] = project_id;
+        return JSON.stringify(dataobj);
+    },
+
+
+    deloitteMapperForChange: function(incomingObj, table, project_key) {
+        var payload = JSON.parse(incomingObj);
+        //Get Project ID
+        var project_id = "";
+        var getprojectID = new GlideRecord('u_dco_projects');
+        getprojectID.addQuery("u_number", project_key);
+        getprojectID.query();
+        if (getprojectID.next()) {
+            project_id = getprojectID.sys_id + '';
+        }
+        var dataobj = {};
+        for (key in payload) {
+            var client_value = payload[key];
+            var getFieldsData = new GlideRecord('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+            getFieldsData.addQuery('u_project_name', project_id);
+            getFieldsData.addQuery('u_table_name', table);
+            getFieldsData.addQuery('u_cms_field', key);
+            getFieldsData.addQuery('u_client_field_choice_value', client_value);
+            getFieldsData.query();
+            //gs.info("Montefiere Ebonding INC Key" + key + "Client Value" + client_value);
+            if (getFieldsData.next()) {
+                //Handle Dependent fields
+                if (getFieldsData.u_cms_field == 'priority' || getFieldsData.u_cms_field == 'impact' || getFieldsData.u_cms_field == 'urgency') {
+                    var priorityKey = 'priority';
+                    if (payload[priorityKey] == '5') {
+                        dataobj['urgency'] = '1';
+                        dataobj['impact'] = 1;
+                        dataobj['priority'] = 1;
+                    } else if (payload[priorityKey] == '4') {
+                        dataobj['urgency'] = '2';
+                        dataobj['impact'] = '1';
+                        dataobj['priority'] = '2';
+                    } else if (payload[priorityKey] == '3') {
+                        dataobj['urgency'] = '2';
+                        dataobj['impact'] = '2';
+                        dataobj['priority'] = '3';
+                    } else if (payload[priorityKey] == '2') {
+                        dataobj['urgency'] = '2';
+                        dataobj['impact'] = '3';
+                        dataobj['priority'] = '4';
+                    } else if (payload[priorityKey] == '1') {
+                        dataobj['urgency'] = '3';
+                        dataobj['impact'] = '3';
+                        dataobj['priority'] = '5';
+                    }
+                } else if (getFieldsData.u_dependent_field_required == true) {
+                    var dependentField = getFieldsData.u_dependent_field + '';
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                    dataobj[dependentField] = getFieldsData.u_deloitte_dependent_value.toString();
+                } else {
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                }
+
+            } else if (key == "affected_end_user" || key == "requestor" || key == "assigned_to") {
+                var mf_cont = new GlideRecord("u_mf_contacts");
+                mf_cont.addQuery("u_correlation_id", client_value);
+                mf_cont.query();
+                if (mf_cont.next()) {
+                    var mf_cont_sys = mf_cont.sys_id.toString();
+                    dataobj[key] = mf_cont_sys.toString();
+                }
+            } else if (key == "location") {
+
+                var getLoc = new GlideRecord("cmn_location");
+                getLoc.addQuery("u_correlation_id", client_value);
+                getLoc.query();
+                if (getLoc.next()) {
+
+                    var sysID = getLoc.sys_id.toString();
+                    dataobj[key] = sysID;
+                }
+            } else if (key == "call_back_date") {
+                var epcoh = client_value;
+                var gdt = new GlideDateTime();
+                gdt.setNumericValue(epcoh * 1000);
+                dataobj[key] = gdt.toString();
+            } else if (key == "callback_group" || key == "assignment_group") {
+                var mf_group = new GlideRecord("sys_user_group");
+                mf_group.addQuery("u_correlation_id", client_value);
+                mf_group.query();
+                if (mf_group.next()) {
+                    var mf_grp_sys = mf_group.sys_id;
+                    dataobj[key] = mf_grp_sys.toString();
+                }
+            } else if (key == "cmdb_ci" || key == "ci") {
+                var ci = new GlideRecord("cmdb_ci");
+                ci.addQuery("correlation_id", client_value);
+                ci.query();
+                if (ci.next()) {
+                    var ci_sysID = ci.sys_id.toString();
+                    dataobj[key] = ci_sysID.toString();
+                    //dataobj['ci'] = ci_sysID.toString();
+                }
+            } else if (key == "parent_incident") {
+                var inc = new GlideRecord('incident');
+                inc.addQuery('correlation_id', client_value);
+                inc.query();
+                if (inc.next()) {
+                    dataobj[key] = inc.sys_id.toString();
+                }
+            } else {
+                dataobj[key] = payload[key];
+            }
+        }
+        dataobj['project_id'] = project_id;
+        return JSON.stringify(dataobj);
+    },
+
+    deloitteMapperForSR: function(incomingObj, table, project_key) {
+        var payload = JSON.parse(incomingObj);
+        var dataobj = {};
+        //Get Project ID
+        var project_id = "";
+        var getprojectID = new GlideRecord('u_dco_projects');
+        getprojectID.addQuery("u_number", project_key);
+        getprojectID.query();
+        if (getprojectID.next()) {
+            project_id = getprojectID.sys_id + '';
+        }
+        for (key in payload) {
+            var client_value = payload[key];
+            var getFieldsData = new GlideRecord('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+            getFieldsData.addQuery('u_project_name', project_id);
+            getFieldsData.addQuery('u_table_name', table);
+            getFieldsData.addQuery('u_cms_field', key);
+            getFieldsData.addQuery('u_client_field_choice_value', client_value);
+            getFieldsData.query();
+            if (getFieldsData.next()) {
+                //Dependent Field Logic
+                if (getFieldsData.u_cms_field == 'priority' || getFieldsData.u_cms_field == 'impact' || getFieldsData.u_cms_field == 'urgency') {
+                    var priorityKey = 'priority';
+                    if (payload[priorityKey] == '5') {
+                        dataobj['urgency'] = '1';
+                        dataobj['impact'] = 1;
+                        dataobj['priority'] = 1;
+                    } else if (payload[priorityKey] == '4') {
+                        dataobj['urgency'] = '2';
+                        dataobj['impact'] = '1';
+                        dataobj['priority'] = '2';
+                    } else if (payload[priorityKey] == '3') {
+                        dataobj['urgency'] = '2';
+                        dataobj['impact'] = '2';
+                        dataobj['priority'] = '3';
+                    } else if (payload[priorityKey] == '2') {
+                        dataobj['urgency'] = '2';
+                        dataobj['impact'] = '3';
+                        dataobj['priority'] = '4';
+                    } else if (payload[priorityKey] == '1') {
+                        dataobj['urgency'] = '3';
+                        dataobj['impact'] = '3';
+                        dataobj['priority'] = '5';
+                    }
+
+
+                } else if (getFieldsData.u_dependent_field_required == "true" || getFieldsData.u_dependent_field_required == true) {
+
+                    var dependentField = getFieldsData.u_dependent_field + '';
+
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                    dataobj[dependentField] = getFieldsData.u_deloitte_dependent_value.toString();
+                    gs.info("Montefiere Ebonding REQ" + getFieldsData.u_dependent_field_required + "==dependent value==" + dataobj[dependentField]);
+                } else {
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                }
+            } else if (key == "affected_end_user" || key == "requestor" || key == "assigned_to") {
+                var mf_cont = new GlideRecord("u_mf_contacts");
+                mf_cont.addQuery("u_correlation_id", client_value);
+                mf_cont.query();
+                if (mf_cont.next()) {
+                    var mf_cont_sys = mf_cont.sys_id.toString();
+                    dataobj[key] = mf_cont_sys.toString();
+                }
+            } else if (key == "location") {
+
+                var getLoc = new GlideRecord("cmn_location");
+                getLoc.addQuery("u_correlation_id", client_value);
+                getLoc.query();
+                if (getLoc.next()) {
+
+                    var sysID = getLoc.sys_id.toString();
+                    dataobj[key] = sysID;
+                }
+            } else if (key == "go_live" || key == "fcr") {
+                if (payload[key] == "1") {
+                    dataobj[key] = true;
+                } else {
+                    dataobj[key] = false;
+                }
+            } else if (key == "call_back_date") {
+                var epcoh = client_value;
+                var gdt = new GlideDateTime();
+                gdt.setNumericValue(epcoh * 1000);
+                dataobj[key] = gdt.toString();
+
+            } else if (key == "callback_group" || key == "assignment_group") {
+                var mf_group = new GlideRecord("sys_user_group");
+                mf_group.addQuery("u_correlation_id", client_value);
+                mf_group.query();
+                if (mf_group.next()) {
+                    var mf_grp_sys = mf_group.sys_id;
+                    dataobj[key] = mf_grp_sys.toString();
+                }
+            } else if (key == "cmdb_ci" || key == "ci") {
+                var ci = new GlideRecord("cmdb_ci");
+                ci.addQuery("correlation_id", client_value);
+                ci.query();
+                if (ci.next()) {
+                    var ci_sysID = ci.sys_id.toString();
+                    dataobj[key] = ci_sysID.toString();
+                }
+            } else {
+                dataobj[key] = payload[key];
+            }
+        }
+        dataobj['project_id'] = project_id;
+        return JSON.stringify(dataobj);
+
+    },
+    deloitteMapperForUser: function(incomingObj, table, project_key) {
+        var payload = JSON.parse(incomingObj);
+        //Get Project ID
+        var project_id = "";
+        var getprojectID = new GlideRecord('u_dco_projects');
+        getprojectID.addQuery("u_number", project_key);
+        getprojectID.query();
+        if (getprojectID.next()) {
+            project_id = getprojectID.sys_id + '';
+        }
+        var dataobj = {};
+        for (key in payload) {
+            var client_value = payload[key];
+            var getFieldsData = new GlideRecord('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+            getFieldsData.addQuery('u_project_name', project_id);
+            getFieldsData.addQuery('u_table_name', table);
+            getFieldsData.addQuery('u_cms_field', key);
+            getFieldsData.addQuery('u_client_field_choice_value', client_value);
+            getFieldsData.query();
+            if (getFieldsData.next()) {
+                //Handle Dependent fields
+                if (getFieldsData.u_dependent_field_required == 'true') {
+                    var dependentField = getFieldsData.u_dependent_field + '';
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                    dataobj[dependentField] = getFieldsData.u_deloitte_dependent_value.toString();
+                } else {
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                }
+
+            } else {
+                dataobj[key] = payload[key];
+            }
+        }
+        dataobj['project_id'] = project_id;
+        return JSON.stringify(dataobj);
+    },
+    deloitteMapperForscTask: function(incomingObj) {
+        var incomingObjparsed = JSON.parse(incomingObj);
+        var impact = incomingObjparsed["sf:BMCServiceDesk__FKImpact__c"];
+        var urgency = incomingObjparsed["sf:BMCServiceDesk__FKUrgency__c"];
+        //var priority = incomingObjparsed["sf:BMCServiceDesk__FKPriority__c"];
+        var status = incomingObjparsed["sf:BMCServiceDesk__FKStatus__c"];
+        var category = incomingObjparsed["sf:BMCServiceDesk__FKCategory__c"];
+        //var shortDescription = incomingObjparsed["sf:BMCServiceDesk__shortDescription__c"];
+        var shortDescription = incomingObjparsed["sf:BMCRF_Title__c"];
+        var description = incomingObjparsed["sf:BMCServiceDesk__taskDescription__c"];
+        var id = incomingObjparsed['sf:Id'];
+        var name = incomingObjparsed['sf:Name'];
+        var request = incomingObjparsed['sf:BMCServiceDesk__FKIncident__c'];
+        var change = incomingObjparsed['sf:BMCServiceDesk__FKChange__c'];
+        var priority = incomingObjparsed['sf:BMCServiceDesk__Priority_ID__c'];
+        if (request == "") {
+            table = "change_task";
+        } else {
+            table = "sc_task";
+        }
+        var obj = {};
+        obj['sf:BMCServiceDesk__FKImpact__c'] = impact;
+        obj['sf:BMCServiceDesk__FKUrgency__c'] = urgency;
+        //obj['sf:BMCServiceDesk__FKPriority__c'] = priority;
+        //obj['sf:BMCServiceDesk__Priority_ID__c'] = priority;
+        obj['sf:BMCServiceDesk__FKStatus__c'] = status;
+        obj['sf:BMCServiceDesk__FKCategory__c'] = category;
+        var dataobj = {};
+        for (var key in obj) {
+            var getFieldsData = new GlideRecord('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+            getFieldsData.addQuery('u_project_name', gs.getProperty('sn_sforce_v2_spoke.project.tupperware.id'));
+            getFieldsData.addQuery('u_table_name', table);
+            getFieldsData.addQuery('u_client_field_name', key);
+            getFieldsData.addQuery('u_client_field_choice_value', obj[key]);
+            getFieldsData.query();
+            if (getFieldsData.next()) {
+                key = key.replace(":", "_");
+                key = key.replaceAll("__", "_");
+                if (key == "sf_BMCServiceDesk_FKStatus_c") {
+                    dataobj[key] = getFieldsData.getValue('u_cms_field_value_c2d');
+                } else {
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                }
+            }
+        }
+
+        dataobj['sf_BMCServiceDesk_shortDescription_c'] = shortDescription;
+        dataobj['sf_BMCServiceDesk_Priority_ID_c'] = priority;
+        dataobj['sf_BMCServiceDesk_taskDescription_c'] = description;
+        dataobj['sf_Id'] = id;
+        dataobj['sf_name'] = name;
+        dataobj['sf_BMCServiceDesk_FKIncident_c'] = request;
+        dataobj['sf_BMCServiceDesk_FKChange_c'] = change;
+        return JSON.stringify(dataobj);
+    },
+
+    deloitteMapperForMFTask: function(incomingObj, table, project_key) {
+        var payload = JSON.parse(incomingObj);
+        //Get Project ID
+        var project_id = "";
+        var getprojectID = new GlideRecord('u_dco_projects');
+        getprojectID.addQuery("u_number", project_key);
+        getprojectID.query();
+        if (getprojectID.next()) {
+            project_id = getprojectID.sys_id + '';
+        }
+        var dataobj = {};
+        for (key in payload) {
+            var client_value = payload[key];
+            var getFieldsData = new GlideRecord('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+            getFieldsData.addQuery('u_project_name', project_id);
+            getFieldsData.addQuery('u_table_name', table);
+            getFieldsData.addQuery('u_cms_field', key);
+            getFieldsData.addQuery('u_client_field_choice_value', client_value);
+            getFieldsData.query();
+            if (getFieldsData.next()) {
+                //Handle Dependent fields
+                if (getFieldsData.u_dependent_field_required == true) {
+                    var dependentField = getFieldsData.u_dependent_field + '';
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                    dataobj[dependentField] = getFieldsData.u_deloitte_dependent_value.toString();
+                } else {
+
+
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+
+
+                }
+
+            } else if (key == "assigned_to") {
+                var mf_cont = new GlideRecord("u_mf_contacts");
+                mf_cont.addQuery("u_correlation_id", client_value);
+                mf_cont.query();
+                if (mf_cont.next()) {
+                    var mf_cont_sys = mf_cont.sys_id.toString();
+                    dataobj[key] = mf_cont_sys.toString();
+                }
+            } else if (key == "assignment_group") {
+                var mf_group = new GlideRecord("sys_user_group");
+                mf_group.addQuery("u_correlation_id", client_value);
+                mf_group.query();
+                if (mf_group.next()) {
+                    var mf_grp_sys = mf_group.sys_id;
+                    dataobj[key] = mf_grp_sys.toString();
+                }
+            } else if (key == "cmdb_ci") {
+                var ci = new GlideRecord("cmdb_ci");
+                ci.addQuery("correlation_id", client_value);
+                ci.query();
+                if (ci.next()) {
+                    var ci_sysID = ci.sys_id.toString();
+                    dataobj[key] = ci_sysID.toString();
+                    //dataobj['ci'] = ci_sysID.toString();
+                }
+            } else {
+                dataobj[key] = payload[key];
+            }
+        }
+
+        dataobj['project_id'] = project_id;
+        return JSON.stringify(dataobj);
+    },
+
+    deloitteMapperForMFChangeTask: function(incomingObj, table, project_key) {
+        var payload = JSON.parse(incomingObj);
+        //Get Project ID
+        var project_id = "";
+        var getprojectID = new GlideRecord('u_dco_projects');
+        getprojectID.addQuery("u_number", project_key);
+        getprojectID.query();
+        if (getprojectID.next()) {
+            project_id = getprojectID.sys_id + '';
+        }
+        var dataobj = {};
+        for (key in payload) {
+            var client_value = payload[key];
+            var getFieldsData = new GlideRecord('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+            getFieldsData.addQuery('u_project_name', project_id);
+            getFieldsData.addQuery('u_table_name', table);
+            getFieldsData.addQuery('u_cms_field', key);
+            getFieldsData.addQuery('u_client_field_choice_value', client_value);
+            getFieldsData.query();
+            if (getFieldsData.next()) {
+                //Handle Dependent fields
+                if (getFieldsData.u_dependent_field_required == true) {
+                    var dependentField = getFieldsData.u_dependent_field + '';
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                    dataobj[dependentField] = getFieldsData.u_deloitte_dependent_value.toString();
+                } else {
+
+
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+
+
+                }
+
+            } else if (key == "assigned_to") {
+                var mf_cont = new GlideRecord("u_mf_contacts");
+                mf_cont.addQuery("u_correlation_id", client_value);
+                mf_cont.query();
+                if (mf_cont.next()) {
+                    var mf_cont_sys = mf_cont.sys_id.toString();
+                    dataobj[key] = mf_cont_sys.toString();
+                }
+            } else if (key == "assignment_group") {
+                var mf_group = new GlideRecord("sys_user_group");
+                mf_group.addQuery("u_correlation_id", client_value);
+                mf_group.query();
+                if (mf_group.next()) {
+                    var mf_grp_sys = mf_group.sys_id;
+                    dataobj[key] = mf_grp_sys.toString();
+                }
+            } else if (key == "cmdb_ci") {
+                var ci = new GlideRecord("cmdb_ci");
+                ci.addQuery("correlation_id", client_value);
+                ci.query();
+                if (ci.next()) {
+                    var ci_sysID = ci.sys_id.toString();
+                    dataobj[key] = ci_sysID.toString();
+                    //dataobj['ci'] = ci_sysID.toString();
+                }
+            } else {
+                dataobj[key] = payload[key];
+            }
+        }
+
+        dataobj['project_id'] = project_id;
+        return JSON.stringify(dataobj);
+    },
+
+    deloitteMapperForCR: function(incomingObj, table) {
+        var chgCurrentState;
+        var incomingObjparsed = JSON.parse(incomingObj);
+        var shortDescription = incomingObjparsed["short_description"];
+        var impact = incomingObjparsed["impact"];
+        var urgency = incomingObjparsed["urgency"];
+        var priority = incomingObjparsed["priority"];
+        var state = incomingObjparsed["state"];
+        var category = incomingObjparsed["category"];
+        var description = incomingObjparsed["description"];
+        var openDateTime = incomingObjparsed['openDateTime'];
+        //var reasonForChangeDetails = incomingObjparsed['sf:BMCServiceDesk__Reason_for_Change__c'];
+        var backOutPlanDetails = incomingObjparsed['backOutPlanDetails'];
+        var rollOutPlanDetails = incomingObjparsed['rollOutPlanDetails'];
+        var actualStartDate = incomingObjparsed['actualStartDate'];
+        var changeType = incomingObjparsed['change_type'];
+        var scheduledStartDate = incomingObjparsed['Scheduled_Start_Date'];
+        var scheduledEndDate = incomingObjparsed['Scheduled_End_Date'];
+        var closeCode = incomingObjparsed['close_Code'];
+        var closeNotes = incomingObjparsed['close_notes'];
+        var approval = incomingObjparsed['approval'];
+        var testPlan = incomingObjparsed['test_plan'];
+        var id = incomingObjparsed['correlation_id'];
+        var name = incomingObjparsed['number'];
+        var actualenddate = incomingObjparsed['actualenddate'];
+        var obj = {};
+        obj['closeCode'] = closeCode;
+        obj['impact'] = impact;
+        obj['urgency'] = urgency;
+        obj['priority'] = priority;
+        obj['state'] = state;
+        obj['category'] = category;
+        var dataobj = {};
+
+        for (var key in obj) {
+            var getFieldsData = new GlideRecord('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+            getFieldsData.addQuery('u_project_name', '');
+            getFieldsData.addQuery('u_table_name', table);
+            getFieldsData.addQuery('u_client_field_name', key);
+            getFieldsData.addQuery('u_client_field_choice_value', obj[key]);
+            getFieldsData.query();
+            if (getFieldsData.next()) {
+                var chg = new GlideRecord('change_request');
+                chg.addQuery('correlation_id', id);
+                chg.query();
+                if (chg.next()) {
+                    chgCurrentState = chg.getValue("state");
+                }
+                if (key == "state") {
+                    if (approval == "approved" || changeType == "Standard") {
+                        dataobj['sn_ebonding_approval_completed'] = true;
+                    } else {
+                        dataobj['sn_ebonding_approval_completed'] = chg.u_e_bonding_client_approval_completed;
+                    }
+
+                    dataobj[key] = getFieldsData.getValue('u_cms_field_value_c2d');
+                } else {
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                }
+            }
+        }
+        dataobj['short_description'] = shortDescription;
+        dataobj['description'] = description;
+        dataobj['correlation_id'] = id;
+        dataobj['number'] = name;
+        dataobj['Reason_for_Change'] = reasonForChangeDetails;
+        dataobj['Back_Out_Plan'] = backOutPlanDetails;
+        dataobj['Roll_Out_Plan'] = rollOutPlanDetails;
+        dataobj['Change_Type'] = changeType.toLowerCase();
+        dataobj['Open_Date_Time'] = this.formatDateTime(openDateTime);
+        dataobj['Scheduled_Start_Date'] = this.formatDateTime(scheduledStartDate);
+        dataobj['Scheduled_End_Date'] = this.formatDateTime(scheduledEndDate);
+        dataobj['Actual_Start_Date'] = this.formatDateTime(actualStartDate);
+        dataobj['Actual_End_Date'] = this.formatDateTime(actualenddate);
+        dataobj['close_notes'] = closeNotes;
+        dataobj['Approved'] = approval;
+        dataobj['Testing_Evidence'] = testPlan;
+
+        return JSON.stringify(dataobj);
+    },
+
+    deloitteMapperForscTask: function(incomingObj) {
+        var incomingObjparsed = JSON.parse(incomingObj);
+        var impact = incomingObjparsed["sf:BMCServiceDesk__FKImpact__c"];
+        var urgency = incomingObjparsed["sf:BMCServiceDesk__FKUrgency__c"];
+        //var priority = incomingObjparsed["sf:BMCServiceDesk__FKPriority__c"];
+        var status = incomingObjparsed["sf:BMCServiceDesk__FKStatus__c"];
+        var category = incomingObjparsed["sf:BMCServiceDesk__FKCategory__c"];
+        //var shortDescription = incomingObjparsed["sf:BMCServiceDesk__shortDescription__c"];
+        var shortDescription = incomingObjparsed["sf:BMCRF_Title__c"];
+        var description = incomingObjparsed["sf:BMCServiceDesk__taskDescription__c"];
+        var id = incomingObjparsed['sf:Id'];
+        var name = incomingObjparsed['sf:Name'];
+        var request = incomingObjparsed['sf:BMCServiceDesk__FKIncident__c'];
+        var change = incomingObjparsed['sf:BMCServiceDesk__FKChange__c'];
+        var priority = incomingObjparsed['sf:BMCServiceDesk__Priority_ID__c'];
+        if (request == "") {
+            table = "change_task";
+        } else {
+            table = "sc_task";
+        }
+        var obj = {};
+        obj['sf:BMCServiceDesk__FKImpact__c'] = impact;
+        obj['sf:BMCServiceDesk__FKUrgency__c'] = urgency;
+        //obj['sf:BMCServiceDesk__FKPriority__c'] = priority;
+        //obj['sf:BMCServiceDesk__Priority_ID__c'] = priority;
+        obj['sf:BMCServiceDesk__FKStatus__c'] = status;
+        obj['sf:BMCServiceDesk__FKCategory__c'] = category;
+        var dataobj = {};
+        for (var key in obj) {
+            var getFieldsData = new GlideRecord('sn_sforce_v2_spoke_cms_salesforce_mapping_table');
+            getFieldsData.addQuery('u_project_name', gs.getProperty('sn_sforce_v2_spoke.project.tupperware.id'));
+            getFieldsData.addQuery('u_table_name', table);
+            getFieldsData.addQuery('u_client_field_name', key);
+            getFieldsData.addQuery('u_client_field_choice_value', obj[key]);
+            getFieldsData.query();
+            if (getFieldsData.next()) {
+                key = key.replace(":", "_");
+                key = key.replaceAll("__", "_");
+                if (key == "sf_BMCServiceDesk_FKStatus_c") {
+                    dataobj[key] = getFieldsData.getValue('u_cms_field_value_c2d');
+                } else {
+                    dataobj[key] = getFieldsData.u_cms_field_value_c2d.toString();
+                }
+            }
+        }
+
+        dataobj['sf_BMCServiceDesk_shortDescription_c'] = shortDescription;
+        dataobj['sf_BMCServiceDesk_Priority_ID_c'] = priority;
+        dataobj['sf_BMCServiceDesk_taskDescription_c'] = description;
+        dataobj['sf_Id'] = id;
+        dataobj['sf_name'] = name;
+        dataobj['sf_BMCServiceDesk_FKIncident_c'] = request;
+        dataobj['sf_BMCServiceDesk_FKChange_c'] = change;
+        return JSON.stringify(dataobj);
+    },
+
+    type: 'CMSMapperUtils'
+};
+
+
+
+
+==========Server Utils============================
+
+
+var cms_serverUtils = Class.create();
+cms_serverUtils.prototype = {
+    EBOND_CONFIGURATION_TABLE: 'u_e_bonding_configurations',
+    REST_METHOD_MAPPING_TABLE: 'u_rest_method_mapping_table',
+    initialize: function(current) {
+        this.current = current;
+    },
+
+    /*
+    Return GlideRecord Object based on Table and query
+    @Input _table {String} : Table name
+    @Input _query {String} : Encoded Query
+    @Output gr {GlideRecord Object} : GlideRecord Object based on encoded query
+    */
+    getGlideRecordObj: function(_table, _query) {
+        var gr = new GlideRecord(_table);
+        if (JSUtil.notNil(_query))
+            gr.addEncodedQuery(_query);
+        gr.query();
+        if (gr.next())
+            return gr;
+        else
+            return '';
+    },
+    /*
+    Called from CMS Integration Business Rule condition
+    @Input integrationType [String] : type of integration configured in u_e_bonding_configurations
+    @Output true/false [Boolean] : true = Integration will trigger, false = No Integration
+    */
+    canIRun: function(integrationType) {
+        if (this.current.sys_class_name.toString() == 'change_request') {
+            return (this.eBondingUser() && this.checkChangeEbonding(integrationType));
+        } else if (this.current.sys_class_name.toString() == 'incident') {
+            if (!this.current.correlation_id.nil()) //If Incident is updated
+                return (this.eBondingUser() && this.checkIncidentEbonding(true, integrationType));
+            else //Incident is created
+                return (this.eBondingUser() && this.checkIncidentEbonding('', integrationType));
+        } else if (this.current.sys_class_name.toString() == 'sc_req_item') {
+            return (this.eBondingUser() && this.checkRequestEbondingOutbound(integrationType));
+        } else if (this.current.sys_class_name.toString() == 'sc_task') {
+            return (this.eBondingUser() && this.checkSCTaskEbonding(integrationType));
+        } else if (this.current.sys_class_name.toString() == 'change_task') {
+            return (this.eBondingUser() && this.checkChangeTaskEbonding(integrationType));
+        } else
+            return false;
+
+    },
+    /*
+    Called from this.canIRun(), to check if the created/updated by user is E-Bonding user
+    @Output true/false [Boolean] : true = Created/Updated by Interactive/Actual user, false = Created/Updated by Non-Interactive/Integration user
+    */
+
+    eBondingUser: function() {
+        var userName = '';
+        if (this.current.operation() == 'insert') { // If operation is insert check for created by
+            userName = this.current.sys_created_by.toString();
+        } else if (this.current.operation() == 'update') { // If operation is update check for updated by
+            userName = this.current.sys_updated_by.toString();
+        }
+
+        var grUser = this.getGlideRecordObj("sys_user", 'user_name=' + userName);
+        if (grUser.u_ebonding_user == true) {
+            return false;
+        } else {
+            return true;
+        }
+    },
+
+    /*
+    Called from CMS Integration Business Rule Script to update records in Client Instance
+    @Input obj [GlideRecord] : GlideRecord Oject of record updated by user
+	@Input type [String] : Type of operation. Possible values are Create Record / Update Record
+	@Input oData [String] : Actual Request Payload sends to Client Instance
+	@Input table [String] : Table name where record is created
+	@Input corr_id [String] : sys_id of records present in Client Instance
+    */
+    sendTaskPayload: function(obj, type, oData, table, corr_id) {
+        try {
+            var prop = gs.getProperty("cms_lenovo_ebonding_query_cloudHostingVendor");
+            var rest_message = '';
+            var state = obj.state.getDisplayValue().toLowerase();
+            var grMap = this.getGlideRecordObj(this.REST_METHOD_MAPPING_TABLE, 'u_project=' + obj.u_dco_project_ref + '^u_rest_type=' + type);
+            if (grMap)
+                rest_message = grMap.u_rest_message.toString();
+
+            var r = new sn_ws.RESTMessageV2(rest_message.toString(), type);
+            r.setRequestHeader('Accept', 'application/json');
+            r.setRequestHeader('Content-Type', 'application/json');
+            var hst_vendor = obj.u_dco_project_ref.u_hosting_vendor.toString(); // Hosting vendor field values
+            var hst_list = hst_vendor.split(",");
+            for (var i = 0; i < hst_list.length; i++) //Checking multiple values
+            {
+                if (hst_list[i] == prop) { // header for Lenovo request
+                    r.setRequestHeader('tableName', table);
+                }
+            }
+            r.setStringParameter('tableName', table); // Pass the table on which record has to be created
+            r.setStringParameter('id', obj.sys_id); // Sending the sys_id of the current record so that client can update the record at their end
+            r.setRequestBody(oData);
+            var response = r.execute();
+            var responseBody = response.getBody();
+            var httpStatus = response.getStatusCode();
+            JSUtil.logObject("OUTBOUND : cms_serverUtils : sendTaskPayload : httpStatus : " + httpStatus + " ResponseBody : " + responseBody + " Request Body : " + r.getRequestBody());
+
+            if (httpStatus != 200 && httpStatus != 201) {
+                var err_msg = gs.getMessage('CMS Ebonding Error Message').toString();
+            }
+        } catch (ex) {
+            var message = ex.getMessage();
+            JSUtil.logObject('OUTBOUND : cms_serverUtils : sendTaskPayload : Error ' + message);
+        }
+    },
+
+    /*
+    Called from CMS Integration Business Rule Script to Create records in Client Instance
+    @Input obj [GlideRecord] : GlideRecord Oject of record updated by user
+	@Input type [String] : Type of operation. Possible values are Create Record / Update Record
+	@Input oData [String] : Actual Request Payload sends to Client Instance
+	 @Output HTTP Status [String] : Created = 201
+    */
+
+    createProjectPayload: function(obj, type, oData) {
+        try {
+
+            var rest_message = '';
+            var grMap = this.getGlideRecordObj(this.REST_METHOD_MAPPING_TABLE, 'u_rest_message=' + 'lenovo_data_sync' + '^u_rest_type=' + type);
+            if (grMap)
+                rest_message = grMap.u_rest_message.toString();
+
+            var r = new sn_ws.RESTMessageV2(rest_message.toString(), type);
+
+            r.setRequestHeader("Accept", "application/json");
+            r.setRequestHeader('Content-Type', 'application/json');
+            r.setRequestBody(oData);
+            var response = r.execute();
+            var responseBody = response.getBody();
+            var httpStatus = response.getStatusCode();
+            var parser = new JSON.parse(responseBody);
+            JSUtil.logObject("OUTBOUND : cms_serverUtils : createProjectPayload : httpStatus : " + httpStatus + " ResponseBody : " + responseBody + " Request Body : " + r.getRequestBody());
+
+            if (parser.result.sys_id.toString()) {
+                obj.u_correlation_id = parser.result.sys_id.toString(); // Set correlation id with the target instance sys_id           
+                this.sendPendingAttachment(obj, parser.result.sys_id.toString());
+            }
+
+
+            if (httpStatus != 200 && httpStatus != 201) {
+                var err_msg = gs.getMessage('CMS Ebonding Error Message').toString();
+                JSUtil.logObject('OUTBOUND : cms_serverUtils : createProjectPayload : Error ' + err_msg);
+            }
+            return httpStatus;
+
+        } catch (ex) {
+            var message = ex.getMessage();
+            JSUtil.logObject('OUTBOUND : cms_serverUtils : createProjectPayload : Error message ' + message);
+        }
+    },
+
+    /*
+    Called from CMS Integration Business Rule Script to Create records in Client Instance
+    @Input obj [GlideRecord] : GlideRecord Oject of record updated by user
+	@Input type [String] : Type of operation. Possible values are Create Record / Update Record
+	@Input oData [String] : Actual Request Payload sends to Client Instance
+	@Input corr_id [String] : Id of external ticket
+	 @Output HTTP Status [String] : Created = 201
+    */
+    sendProjectPayload: function(obj, type, oData, corr_id) {
+        try {
+            var rest_message = '';
+            var grMap = this.getGlideRecordObj(this.REST_METHOD_MAPPING_TABLE, 'u_rest_message=' + 'lenovo_data_sync' + '^u_rest_type=' + type);
+            if (grMap)
+                rest_message = grMap.u_rest_message.toString();
+            var r = new sn_ws.RESTMessageV2(rest_message.toString(), type);
+            r.setRequestHeader('Accept', 'application/json');
+            r.setRequestHeader('Content-Type', 'application/json');
+            r.setStringParameter('sys_id', corr_id); // Sending the sys_id of the current record so that client can update the record at their end
+            r.setRequestBody(oData);
+            var response = r.execute();
+            var responseBody = response.getBody();
+            var httpStatus = response.getStatusCode();
+            JSUtil.logObject("OUTBOUND : cms_serverUtils : sendProjectPayload : httpStatus : " + httpStatus + " ResponseBody : " + responseBody + " Request Body : " + r.getRequestBody());
+
+            if (httpStatus != 200 && httpStatus != 201) {
+                var err_msg = gs.getMessage('CMS Ebonding Error Message').toString();
+            }
+        } catch (ex) {
+            var message = ex.getMessage();
+            JSUtil.logObject('OUTBOUND : cms_serverUtils : sendProjectPayload : Error ' + message);
+        }
+    },
+
+
+    /*
+    Called from CMS Integration Business Rule Script to Create records in Client Instance
+    @Input obj [GlideRecord] : GlideRecord Oject of record updated by user
+	@Input type [String] : Type of operation. Possible values are Create Record / Update Record
+	@Input oData [String] : Actual Request Payload sends to Client Instance
+	@Input table [String] : Table name where record is created
+	 @Output HTTP Status [String] : Created = 201
+    */
+    createTaskPayload: function(obj, type, oData, table) { // This function is called when a record is inserted on the table
+
+        try {
+
+            var prop = gs.getProperty("cms_lenovo_ebonding_query_cloudHostingVendor");
+            var rest_message = '';
+            var grMap = this.getGlideRecordObj(this.REST_METHOD_MAPPING_TABLE, 'u_project=' + obj.u_dco_project_ref + '^u_rest_type=' + type);
+            if (grMap)
+                rest_message = grMap.u_rest_message.toString();
+
+            var r = new sn_ws.RESTMessageV2(rest_message.toString(), type);
+
+            r.setRequestHeader("Accept", "application/json");
+            r.setRequestHeader('Content-Type', 'application/json');
+            var hst_vendor = obj.u_dco_project_ref.u_hosting_vendor.toString(); // Hosting vendor field values
+            var hst_list = hst_vendor.split(",");
+            for (var i = 0; i < hst_list.length; i++) //Checking multiple values
+            {
+                if (hst_list[i] == prop) { // header for Lenovo request
+                    r.setRequestHeader('tableName', table);
+                }
+            }
+            r.setStringParameter('tableName', table); // Pass the table on which record has to be created
+            r.setRequestBody(oData);
+            var response = r.execute();
+            var responseBody = response.getBody();
+            var httpStatus = response.getStatusCode();
+            var parser = new JSON.parse(responseBody);
+
+            JSUtil.logObject("OUTBOUND : cms_serverUtils : createTaskPayload : httpStatus : " + httpStatus + " ResponseBody : " + responseBody + " Request Body : " + r.getRequestBody());
+
+            if (parser.result.sys_id.toString()) {
+                obj.correlation_id = parser.result.sys_id.toString(); // Set correlation id with the target instance sys_id           
+                obj.u_source_reference_number = parser.result.number.toString(); // Set source reference number with the target instance number
+                this.sendPendingAttachment(obj, parser.result.sys_id.toString());
+            }
+            if (httpStatus != 200 && httpStatus != 201) {
+                var err_msg = gs.getMessage('CMS Ebonding Error Message').toString();
+                JSUtil.logObject('OUTBOUND : cms_serverUtils : createTaskPayload : Error ' + err_msg);
+            }
+            return httpStatus;
+
+        } catch (ex) {
+            var message = ex.getMessage();
+            JSUtil.logObject('OUTBOUND : cms_serverUtils : createTaskPayload : Error message ' + message);
+        }
+    },
+    /*
+     Called from "CMS Inbound SNOW Ebonding" Scripted REST Web Service to Create records in CMS/Deloitte Instance
+     @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+     @Input response [Object] : HTTP Response object to create response send back to Client
+     @Output response [Object] : Return Response Body with HTTP Status code
+    */
+    parseTaskPayload: function(request, response) { // This function is called to create a new task record
+
+        JSUtil.logObject('INBOUND : cms_serverUtils : parseTaskPayload : Table : ' + request.pathParams.tableName + ' Request Payload : ' + JSON.stringify(request.body.data));
+        var tableName, projKey, target, project, user, userID, grp;
+        tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+
+        if (tableName == "cmdb_ci") {
+            //Calling CMDB server util script include
+            return new cms_ebonding_cmdbUtils().createCMDBPayload(request, response);
+        } else if (tableName == "sc_req_item") {
+            //Calling the Service Request Util Script Include
+            return new cms_ebonding_serviceRequestUtils().getRITMData(request, response);
+        } else if (tableName == "sc_task") {
+            //Calling the Service Request Util Script Include
+            return new cms_ebonding_serviceRequestUtils().getScTaskData(request, response);
+        } else if (tableName == 'incident') {
+            //Calling The Incident Util Script Include
+            return new CMS_ebonding_incidentUtil().getIncidnetData(request, response);
+        } else if (tableName == 'change_request') {
+            //Calling The Change Util Script Include
+            return new cms_ebonding_changeUtil().getChangeRequestData(request, response);
+        } else if (tableName == 'change_task') {
+            //Calling the Change Request Util Script Include
+            return new cms_ebonding_changeUtil().getChangeTaskData(request, response);
+        } else {
+            response.setStatus(403);
+            return {
+                "error": "This table is not E-bonded"
+            };
+        }
+    },
+    /*
+    Called from "CMS Inbound SNOW Ebonding" Scripted REST Web Service to Update records in CMS/Deloitte Instance
+    @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+	@Input response [Object] : HTTP Response object to create response send back to Client
+	 @Output response [Object] : Return Response Body with HTTP Status code
+	 */
+
+    parseUpdateTask: function(request, response) { // This function is called to create a update existing task record
+
+        JSUtil.logObject('INBOUND : cms_serverUtils : parseUpdateTask : Table : ' + request.pathParams.tableName + ' Request Payload : ' + JSON.stringify(request.body.data));
+
+        try {
+            var tableName, projKey, id, comment, work_note;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+
+            if (tableName == 'cmdb_ci') {
+                //Calling CMDB server util script include
+                return new cms_ebonding_cmdbUtils().updateCMDBPayload(request, response);
+            } else if (tableName == 'incident') {
+                //Calling The Incident Util Script Include
+                return new CMS_ebonding_incidentUtil().updateIncidentPayload(request, response);
+            } else if (tableName == 'change_request') {
+                //Calling The Change Util Script Include
+                return new cms_ebonding_changeUtil().updateChangeRequestPayload(request, response);
+            } else if (tableName == 'change_task') {
+                //Calling the Change Request Util Script Include
+                return new cms_ebonding_changeUtil().updateChangeTaskPayload(request, response);
+            } else if (tableName == 'sc_req_item') {
+                //Calling the Service Request Util Script Include
+                return new cms_ebonding_serviceRequestUtils().updateRITMPayload(request, response);
+            } else if (tableName == 'sc_task') {
+                //Calling the Service Request Util Script Include
+                return new cms_ebonding_serviceRequestUtils().updateSCTaskPayload(request, response);
+            } else {
+                response.setStatus(403);
+                return {
+                    "error": "This table is not E-bonded"
+                };
+            }
+        } catch (ex) {
+            JSUtil.logObject('Exception msg for update ' + ex);
+        }
+    },
+    /*
+    @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+	@Input response [Object] : HTTP Response object to create response send back to Client
+	 @Output response [Object] : Return Response Body with HTTP Status code
+    */
+
+    updateIncidentPayload: function(request, response) {
+
+        try {
+            var tableName, projKey, id;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+            projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+            id = request.pathParams.id; // Sys id of the task record that has to be updated
+
+            var inc = this.getGlideRecordObj(tableName, 'sys_id=' + id);
+
+            if (inc.state.toString() == '7') {
+                var closeResponse = {};
+                closeResponse.reponse = "Target record is already closed";
+                response.setBody(closeResponse);
+                response.setStatus(403);
+                return JSON.stringify(response);
+            }
+
+            if (request.body.data.state == '6' && request.body.data.close_code == 'closed_cancelled') { //State Resolved and closed cancelled
+                inc.state = request.body.data.state;
+                inc.close_code = request.body.data.close_code;
+                inc.close_notes = request.body.data.close_notes;
+            }
+
+            if (request.body.data.reopen_count > 0 && request.body.data.state == '2') { // Re-Open incident
+                inc.state = request.body.data.state;
+                inc.reopen_count = request.body.data.reopen_count;
+            }
+            if (request.body.data.state == '7') { //Close
+                inc.state = request.body.data.state;
+                inc.close_code = request.body.data.close_code;
+                inc.close_notes = request.body.data.close_notes;
+            }
+            if (request.body.data.hasOwnProperty("impact")) {
+                inc.impact = request.body.data.impact;
+            }
+            if (request.body.data.hasOwnProperty("urgency")) {
+                inc.urgency = request.body.data.urgency;
+            }
+            inc.short_description = request.body.data.short_description;
+            inc.description = request.body.data.description;
+            if (request.body.data.hasOwnProperty("priority")) {
+                inc.priority = request.body.data.priority;
+            }
+            inc.business_service = request.body.data.business_service;
+            if (JSUtil.notNil(request.body.data.cmdb_ci)) { // Set CI value if it is received via payload
+                var ci = request.body.data.cmdb_ci.toString();
+                var cmdb = new GlideRecord('cmdb_ci');
+                cmdb.get('u_ebonding_id', ci);
+                inc.cmdb_ci = cmdb.sys_id.toString();
+            }
+
+            //comments and worknotes are common for all task table records
+            if (JSUtil.notNil(request.body.data.comments.toString())) {
+                inc.comments.setJournalEntry(request.body.data.comments.toString());
+            }
+            if (JSUtil.notNil(request.body.data.work_notes.toString())) {
+                inc.work_notes.setJournalEntry(request.body.data.work_notes.toString());
+            }
+
+            inc.update();
+            return {
+                "response": "Target record updated successfully",
+                "sys_id": id
+            };
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : updateIncidentPayload : Error message ' + ex, 'CMS_EBONDING');
+        }
+    },
+    /*
+    @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+	@Input response [Object] : HTTP Response object to create response send back to Client
+	 @Output response [Object] : Return Response Body with HTTP Status code
+    */
+
+    updateChangeRequestPayload: function(request, response) {
+
+        try {
+            var tableName, projKey, id;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+            projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+            id = request.pathParams.id; // Sys id of the task record that has to be updated
+
+            var crUpdate = this.getGlideRecordObj('change_request', 'sys_id=' + id);
+            if (crUpdate.state.toString() == '3') {
+                var closeChangeResponse = {};
+                closeChangeResponse.reponse = "Target record is already closed";
+                response.setBody(closeChangeResponse);
+                response.setStatus(403);
+                return JSON.stringify(response);
+            }
+
+            if (request.body.data.approval == 'approved') {
+                crUpdate.u_e_bonding_client_approval_completed = true;
+                crUpdate.state = request.body.data.state;
+            }
+
+            if (request.body.data.state == '4' || request.body.data.state == '3') {
+                crUpdate.state = request.body.data.state;
+            }
+            //crUpdate.risk = request.body.data.risk;
+            if (request.body.data.hasOwnProperty("impact")) {
+                crUpdate.impact = request.body.data.impact;
+            }
+            if (request.body.data.hasOwnProperty("urgency")) {
+                crUpdate.urgency = request.body.data.urgency;
+            }
+            crUpdate.short_description = request.body.data.short_description;
+            crUpdate.description = request.body.data.description;
+            if (request.body.data.hasOwnProperty("priority")) {
+                crUpdate.priority = request.body.data.priority;
+            }
+            crUpdate.business_service = request.body.data.business_service;
+            if (JSUtil.notNil(request.body.data.cmdb_ci)) { // Set CI value if it is received via payload
+                var ci = request.body.data.cmdb_ci.toString();
+                var cmdb = new GlideRecord('cmdb_ci');
+                cmdb.get('u_ebonding_id', ci);
+                crUpdate.cmdb_ci = cmdb.sys_id.toString();
+            }
+
+            //comments and worknotes are common for all task table records
+            if (JSUtil.notNil(request.body.data.comments.toString())) {
+                crUpdate.comments.setJournalEntry(request.body.data.comments.toString());
+            }
+            if (JSUtil.notNil(request.body.data.work_notes.toString())) {
+                crUpdate.work_notes.setJournalEntry(request.body.data.work_notes.toString());
+            }
+
+            crUpdate.update();
+            return {
+                "response": "Target record updated successfully",
+                "sys_id": id
+            };
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : updateChangeRequestPayload : Error message ' + ex, 'CMS_EBONDING');
+        }
+    },
+    /*
+       @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+    	@Input response [Object] : HTTP Response object to create response send back to Client
+    	 @Output response [Object] : Return Response Body with HTTP Status code
+        */
+    updateChangeTaskPayload: function(request, response) {
+
+
+        try {
+            var tableName, projKey, id;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+            //	projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+            id = request.pathParams.id; // Sys id of the task record that has to be updated
+
+
+            var ctask = this.getGlideRecordObj(tableName, 'sys_id=' + id);
+            if (request.body.data.u_client_task == 'true') {
+                if (request.body.data.state == '3' || request.body.data.state == '4' || request.body.data.state == '7') {
+                    ctask.state = request.body.data.state;
+                }
+            }
+            ctask.u_client_task = request.body.data.u_client_task;
+            if (request.body.data.hasOwnProperty("impact")) {
+                ctask.impact = request.body.data.impact;
+            }
+            if (request.body.data.hasOwnProperty("urgency")) {
+                ctask.urgency = request.body.data.urgency;
+            }
+            ctask.short_description = request.body.data.short_description;
+            ctask.description = request.body.data.description;
+            if (request.body.data.hasOwnProperty("priority")) {
+                ctask.priority = request.body.data.priority;
+            }
+            ctask.business_service = request.body.data.business_service;
+
+            if (JSUtil.notNil(request.body.data.cmdb_ci)) { // Set CI value if it is received via payload
+                var ci = request.body.data.cmdb_ci.toString();
+                var cmdb = new GlideRecord('cmdb_ci');
+                cmdb.get('u_ebonding_id', ci);
+                ctask.cmdb_ci = cmdb.sys_id.toString();
+            }
+
+            //comments and worknotes are common for all task table records
+            if (JSUtil.notNil(request.body.data.comments.toString())) {
+                ctask.comments.setJournalEntry(request.body.data.comments.toString());
+            }
+            if (JSUtil.notNil(request.body.data.work_notes.toString())) {
+                ctask.work_notes.setJournalEntry(request.body.data.work_notes.toString());
+            }
+
+            ctask.update();
+            return {
+                "response": "Target record updated successfully",
+                "sys_id": id
+            };
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : updateChangeTaskPayload : Error message ' + ex, 'CMS_EBONDING');
+        }
+    },
+    /*
+       @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+    	@Input response [Object] : HTTP Response object to create response send back to Client
+    	 @Output response [Object] : Return Response Body with HTTP Status code
+        */
+    updateRITMPayload: function(request, reponse) {
+
+        try {
+            var tableName, projKey, id;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+            //	projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+            id = request.pathParams.id; // Sys id of the task record that has to be updated
+
+            var ritm = this.getGlideRecordObj(tableName, 'sys_id=' + id);
+
+            if (ritm.state.toString() == '3' || ritm.state.toString() == '4' || ritm.state.toString() == '7') {
+                var closeRITMResponse = {};
+                closeRITMResponse.reponse = "Target record is already closed";
+                response.setBody(closeRITMResponse);
+                response.setStatus(403);
+                return JSON.stringify(response);
+            }
+            if (JSUtil.notNil(request.body.data.business_service))
+                ritm.business_service = request.body.data.business_service;
+
+            if (JSUtil.notNil(request.body.data.state)) {
+                ritm.state = request.body.data.state;
+            }
+            if (JSUtil.notNil(request.body.data.due_date)) {
+                ritm.due_date = new GlideDateTime(request.body.data.due_date).getValue();
+            }
+
+            // ritm.priority = request.body.data.priority;
+
+            //comments and worknotes are common for all task table records
+            if (JSUtil.notNil(request.body.data.comments.toString())) {
+                ritm.comments.setJournalEntry(request.body.data.comments.toString());
+            }
+            if (JSUtil.notNil(request.body.data.work_notes.toString())) {
+                ritm.work_notes.setJournalEntry(request.body.data.work_notes.toString());
+            }
+
+            ritm.update();
+            return {
+                "response": "Target record updated successfully",
+                "sys_id": id
+            };
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : updateRITMPayload : Error message ' + ex, 'CMS_EBONDING');
+        }
+    },
+    /*
+        @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+    	@Input response [Object] : HTTP Response object to create response send back to Client
+    	 @Output response [Object] : Return Response Body with HTTP Status code
+        */
+    updateSCTaskPayload: function(request, reponse) {
+
+        try {
+            var tableName, projKey, id;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+            //	projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+            id = request.pathParams.id; // Sys id of the task record that has to be updated
+
+            var sctask = this.getGlideRecordObj(tableName, 'sys_id=' + id);
+
+            if (sctask.state.toString() == '3' || sctask.state.toString() == '4' || sctask.state.toString() == '7') {
+                var closeScTaskResponse = {};
+                closeScTaskResponse.reponse = "Target record is already closed";
+                response.setBody(closeScTaskResponse);
+                response.setStatus(403);
+                return JSON.stringify(response);
+            }
+
+            if (request.body.data.hasOwnProperty("priority")) {
+                sctask.priority = request.body.data.priority;
+            }
+            if (request.body.data.state)
+                sctask.state = request.body.data.state;
+            //comments and worknotes are common for all task table records
+            if (JSUtil.notNil(request.body.data.comments.toString())) {
+                sctask.comments.setJournalEntry(request.body.data.comments.toString());
+            }
+            if (JSUtil.notNil(request.body.data.work_notes.toString())) {
+                sctask.work_notes.setJournalEntry(request.body.data.work_notes.toString());
+            }
+
+            sctask.update();
+            return {
+                "response": "Target record updated successfully",
+                "sys_id": id
+            };
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : updateSCTaskPayload : Error message ' + ex, 'CMS_EBONDING');
+        }
+    },
+    /*
+       @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+    	@Input response [Object] : HTTP Response object to create response send back to Client
+    	 @Output response [Object] : Return Response Body with HTTP Status code
+        */
+    getIncidnetData: function(request, response) {
+
+
+        try {
+            var _responsePayload = {};
+            var tableName, projKey, target, project, user, userID, grp, inbound_grp;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+            projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+            user = request.pathParams.user.toString(); // Contains user id through which integration is established
+
+            userID = this.getGlideRecordObj('sys_user', 'user_name=' + user);
+            if (userID)
+                userID = userID.sys_id.toString();
+            var _projectGR = this.getGlideRecordObj('u_dco_projects', 'u_number=' + projKey);
+            if (_projectGR) {
+                project = _projectGR.sys_id.toString();
+                if (_projectGR.u_ebonding_assignment_group.toString())
+                    grp = _projectGR.u_ebonding_assignment_group.toString();
+                else
+                    grp = _projectGR.u_assignment_group1.toString();
+            }
+
+            var _groupGR = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + project);
+            if (_groupGR.u_assignment_group.toString())
+                inbound_grp = _groupGR.u_assignment_group.toString();
+            else
+                inbound_grp = false;
+
+            var inc = new GlideRecord(tableName);
+            inc.addEncodedQuery('correlation_id=' + request.body.data.correlation_id);
+            inc.query();
+            if (inc.next()) {
+                _responsePayload['sys_id'] = inc.sys_id.toString();
+                _responsePayload['number'] = inc.number.toString();
+            } else {
+                inc.initialize();
+                if (projKey == 'PROJ0036081' || projKey == 'PROJ0036094') { // For GFS and Stericycle set category and sub-category
+                    inc.category = 'sap basis';
+                    inc.subcategory = 'application';
+                } else {
+                    if (request.body.data.hasOwnProperty('category'))
+                        inc.category = request.body.data.category;
+                    if (request.body.data.hasOwnProperty('subcategory'))
+                        inc.subcategory = request.body.data.subcategory;
+                }
+
+                inc.caller_id = userID;
+                inc.correlation_id = request.body.data.correlation_id;
+                inc.short_description = request.body.data.short_description;
+                inc.description = request.body.data.description;
+                inc.priority = request.body.data.priority;
+                inc.u_source_reference_number = request.body.data.u_source_reference_number;
+                inc.priority = request.body.data.priority;
+                inc.impact = request.body.data.impact;
+                inc.urgency = request.body.data.urgency;
+                inc.u_project_name = project;
+                inc.u_dco_project_ref = project;
+                if (inbound_grp == 'false') {
+                    inc.assignment_group = grp;
+                } else {
+                    inc.assignment_group = inbound_grp;
+                }
+                inc.business_service = request.body.data.business_service;
+
+                if (JSUtil.notNil(request.body.data.cmdb_ci)) { // Set CI value if it is received via payload
+                    var ci = request.body.data.cmdb_ci.toString();
+                    var cmdb = new GlideRecord('cmdb_ci');
+                    cmdb.get('u_ebonding_id', ci);
+                    inc.cmdb_ci = cmdb.sys_id.toString();
+                }
+
+                if (JSUtil.notNil(request.body.data.comments.toString())) {
+                    inc.comments.setJournalEntry(request.body.data.comments.toString());
+                }
+                if (JSUtil.notNil(request.body.data.work_notes.toString())) {
+                    inc.work_notes.setJournalEntry(request.body.data.work_notes.toString());
+                }
+                _responsePayload['sys_id'] = inc.insert();
+                _responsePayload['number'] = inc.number.toString();
+            }
+            _responsePayload['response'] = "Target record created successfully";
+
+            return _responsePayload;
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : getIncidnetData : Error message ' + ex, 'CMS_EBONDING');
+        }
+    },
+    /*
+       @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+    	@Input response [Object] : HTTP Response object to create response send back to Client
+    	 @Output response [Object] : Return Response Body with HTTP Status code
+        */
+    getChangeRequestData: function(request, reponse) {
+        try {
+            var _responsePayload = {};
+            var tableName, projKey, target, project, user, userID, grp, inbound_grp;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+            projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+            user = request.pathParams.user.toString(); // Contains user id through which integration is established
+
+            userID = this.getGlideRecordObj('sys_user', 'user_name=' + user);
+            if (userID)
+                userID = userID.sys_id.toString();
+            var _projectGR = this.getGlideRecordObj('u_dco_projects', 'u_number=' + projKey);
+            if (_projectGR) {
+                project = _projectGR.sys_id.toString();
+                if (_projectGR.u_ebonding_assignment_group.toString())
+                    grp = _projectGR.u_ebonding_assignment_group.toString();
+                else
+                    grp = _projectGR.u_assignment_group1.toString();
+            }
+            var _groupGR = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + project);
+            if (_groupGR.u_assignment_group.toString())
+                inbound_grp = _groupGR.u_assignment_group.toString();
+            else
+                inbound_grp = false;
+
+            var cr = new GlideRecord(tableName);
+            cr.addEncodedQuery('correlation_id=' + request.body.data.correlation_id);
+            cr.query();
+            if (cr.next()) {
+                _responsePayload['sys_id'] = cr.sys_id.toString();
+                _responsePayload['number'] = cr.number.toString();
+            } else {
+                cr.initialize();
+                if (projKey == 'PROJ0036081' || projKey == 'PROJ0036094') { // For GFS and Stericycle set category and sub-category
+                    cr.category = 'sap basis';
+                    cr.u_sub_categorysub = 'application';
+                } else {
+                    if (request.body.data.hasOwnProperty('category'))
+                        cr.category = request.body.data.category;
+                    if (request.body.data.hasOwnProperty('subcategory'))
+                        cr.u_sub_categorysub = request.body.data.subcategory;
+                }
+                cr.requested_by = userID;
+                cr.type = request.body.data.type;
+                if (cr.type == 'standard') {
+                    cr.u_sub_type = 'Standard';
+                }
+
+                cr.justification = request.body.data.justification;
+                cr.implementation_plan = request.body.data.implementation_plan;
+                cr.risk_impact_analysis = request.body.data.risk_impact_analysis;
+                cr.backout_plan = request.body.data.backout_plan;
+                cr.test_plan = request.body.data.test_plan;
+                cr.start_date = request.body.data.start_date;
+                cr.end_date = request.body.data.end_date;
+                cr.risk = request.body.data.risk;
+                cr.requested_by_date = request.body.data.requested_by_date;
+                cr.parent = request.body.data.parent;
+                cr.correlation_id = request.body.data.correlation_id;
+                cr.short_description = request.body.data.short_description;
+                cr.description = request.body.data.description;
+                cr.priority = request.body.data.priority;
+                cr.u_source_reference_number = request.body.data.u_source_reference_number;
+                cr.impact = request.body.data.impact;
+                cr.urgency = request.body.data.urgency;
+                cr.u_project_name = project;
+                cr.u_dco_project_ref = project;
+                cr.assignment_group = grp;
+                cr.business_service = request.body.data.business_service;
+                if (JSUtil.notNil(request.body.data.cmdb_ci)) { // Set CI value if it is received via payload
+                    var ci = request.body.data.cmdb_ci.toString();
+                    var cmdb = new GlideRecord('cmdb_ci');
+                    cmdb.get('u_ebonding_id', ci);
+                    cr.cmdb_ci = cmdb.sys_id.toString();
+                }
+
+                if (JSUtil.notNil(request.body.data.comments.toString())) {
+                    cr.comments.setJournalEntry(request.body.data.comments.toString());
+                }
+                if (JSUtil.notNil(request.body.data.work_notes.toString())) {
+                    cr.work_notes.setJournalEntry(request.body.data.work_notes.toString());
+                }
+                _responsePayload['sys_id'] = cr.insert();
+                _responsePayload['number'] = cr.number.toString();
+            }
+            _responsePayload['response'] = "Target record created successfully";
+
+            return _responsePayload;
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : getChangeRequestData : Error message ' + ex, 'CMS_EBONDING');
+        }
+    },
+    /*
+       @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+    	@Input response [Object] : HTTP Response object to create response send back to Client
+    	 @Output response [Object] : Return Response Body with HTTP Status code
+        */
+    getChangeTaskData: function(request, response) {
+
+
+        try {
+            var _responsePayload = {};
+            var tableName, projKey, target, project, user, userID, grp;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+            projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+            user = request.pathParams.user.toString(); // Contains user id through which integration is established
+
+            userID = this.getGlideRecordObj('sys_user', 'user_name=' + user);
+            if (userID)
+                userID = userID.sys_id.toString();
+            var _projectGR = this.getGlideRecordObj('u_dco_projects', 'u_number=' + projKey);
+            if (_projectGR) {
+                project = _projectGR.sys_id.toString();
+                if (_projectGR.u_ebonding_assignment_group.toString())
+                    grp = _projectGR.u_ebonding_assignment_group.toString();
+                else
+                    grp = _projectGR.u_assignment_group1.toString();
+            }
+
+            var ctask = new GlideRecord(tableName);
+            ctask.addEncodedQuery('correlation_id=' + request.body.data.correlation_id);
+            ctask.query();
+            if (ctask.next()) {
+                _responsePayload['sys_id'] = ctask.sys_id.toString();
+                _responsePayload['number'] = ctask.number.toString();
+            } else {
+                ctask.initialize();
+                ctask.u_client_task = request.body.data.u_client_task;
+                ctask.correlation_display = request.body.data.u_source_reference_number;
+                ctask.correlation_id = request.body.data.correlation_id;
+                ctask.short_description = request.body.data.short_description;
+                ctask.description = request.body.data.description;
+                ctask.priority = request.body.data.priority;
+                ctask.change_request = request.body.data.change_request;
+                ctask.u_dco_project_ref = project;
+                ctask.business_service = request.body.data.business_service;
+                if (JSUtil.notNil(request.body.data.cmdb_ci)) { // Set CI value if it is received via payload
+                    var ci = request.body.data.cmdb_ci.toString();
+                    var cmdb = new GlideRecord('cmdb_ci');
+                    cmdb.get('u_ebonding_id', ci);
+                    ctask.cmdb_ci = cmdb.sys_id.toString();
+                }
+
+                if (JSUtil.notNil(request.body.data.comments.toString())) {
+                    ctask.comments.setJournalEntry(request.body.data.comments.toString());
+                }
+                if (JSUtil.notNil(request.body.data.work_notes.toString())) {
+                    ctask.work_notes.setJournalEntry(request.body.data.work_notes.toString());
+                }
+                _responsePayload['sys_id'] = ctask.insert();
+                _responsePayload['number'] = ctask.number.toString();
+            }
+            _responsePayload['response'] = "Target record created successfully";
+
+            return _responsePayload;
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : getChangeTaskData : Error message ' + ex, 'CMS_EBONDING');
+        }
+    },
+    /*
+       @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+    	@Input response [Object] : HTTP Response object to create response send back to Client
+    	 @Output response [Object] : Return Response Body with HTTP Status code
+        */
+    getScTaskData: function(request, response) {
+
+        try {
+            var _responsePayload = {};
+            var tableName, projKey, target, project, user, userID, grp;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+            projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+            user = request.pathParams.user.toString(); // Contains user id through which integration is established
+
+            userID = this.getGlideRecordObj('sys_user', 'user_name=' + user);
+            if (userID)
+                userID = userID.sys_id.toString();
+            var _projectGR = this.getGlideRecordObj('u_dco_projects', 'u_number=' + projKey);
+            if (_projectGR) {
+                project = _projectGR.sys_id.toString();
+                if (_projectGR.u_ebonding_assignment_group.toString())
+                    grp = _projectGR.u_ebonding_assignment_group.toString();
+                else
+                    grp = _projectGR.u_assignment_group1.toString();
+            }
+
+            var sc_task = new GlideRecord(tableName);
+            sc_task.addEncodedQuery('correlation_id=' + request.body.data.correlation_id);
+            sc_task.query();
+            if (sc_task.next()) {
+                _responsePayload['sys_id'] = sc_task.sys_id.toString();
+                _responsePayload['number'] = sc_task.number.toString();
+            } else {
+                sc_task.initialize();
+
+                sc_task.request_item = request.body.data.request_item;
+                sc_task.u_project = project;
+                sc_task.assignment_group = grp;
+                sc_task.short_description = request.body.data.short_description;
+                sc_task.description = request.body.data.description;
+                sc_task.correlation_id = request.body.data.correlation_id;
+                sc_task.correlation_display = request.body.data.u_source_reference_number;
+                sc_task.priority = request.body.data.priority;
+                sc_task.business_service = request.body.data.business_service;
+                if (JSUtil.notNil(request.body.data.comments.toString())) {
+                    sc_task.comments.setJournalEntry(request.body.data.comments.toString());
+                }
+                if (JSUtil.notNil(request.body.data.work_notes.toString())) {
+                    sc_task.work_notes.setJournalEntry(request.body.data.work_notes.toString());
+                }
+
+                _responsePayload['sys_id'] = sc_task.insert();
+                _responsePayload['number'] = sc_task.number.toString();
+            }
+
+            _responsePayload['response'] = "Target record created successfully";
+            return _responsePayload;
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : getScTaskData : Error message ' + ex, 'CMS_EBONDING');
+        }
+
+    },
+    /*
+       @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+    	@Input response [Object] : HTTP Response object to create response send back to Client
+    	 @Output response [Object] : Return Response Body with HTTP Status code
+        */
+    getRITMData: function(request, response) {
+
+        try {
+            var tableName, projKey, target, project, user, userID, grp;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+            projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+            user = request.pathParams.user.toString(); // Contains user id through which integration is established
+
+            userID = this.getGlideRecordObj('sys_user', 'user_name=' + user);
+            if (userID)
+                userID = userID.sys_id.toString();
+
+            var _projectGR = this.getGlideRecordObj('u_dco_projects', 'u_number=' + projKey);
+            if (_projectGR) {
+                project = _projectGR.sys_id.toString();
+                if (_projectGR.u_ebonding_assignment_group.toString())
+                    grp = _projectGR.u_ebonding_assignment_group.toString();
+                else
+                    grp = _projectGR.u_assignment_group1.toString();
+            }
+            var cartId = GlideGuid.generate(null);
+            var cart = new Cart(cartId);
+            var item = cart.addItem('8fd507531b55770097bc628a2d4bcbc9'); // For service request create an entry into cart, sys_id referes to the catalog item
+            cart.setVariable(item, 'cms_var_short_description', request.body.data.short_description);
+            cart.setVariable(item, 'cms_var_description', request.body.data.description);
+            var rc = cart.placeOrder(); // Submit the catalog item that is added to cart
+            rc = rc.sys_id;
+            var sc_req = new GlideRecord('sc_request');
+            sc_req.get(rc);
+            sc_req.u_dco_project_ref = project;
+            sc_req.assignment_group = grp;
+            sc_req.priority = request.body.data.priority;
+            sc_req.requested_for = userID;
+            sc_req.business_service = request.body.data.business_service;
+            sc_req.update();
+            var req_item = new GlideRecord(tableName);
+            req_item.addQuery('request', rc);
+            req_item.query();
+            while (req_item.next()) {
+                req_item.u_dco_project_name = project;
+                req_item.short_description = request.body.data.short_description;
+                req_item.description = request.body.data.description;
+                req_item.correlation_id = request.body.data.correlation_id;
+                req_item.correlation_display = request.body.data.u_source_reference_number;
+                req_item.u_source_reference_number = request.body.data.u_source_reference_number;
+                req_item.priority = request.body.data.priority;
+                req_item.assignment_group = grp;
+                req_item.business_service = request.body.data.business_service;
+                if (JSUtil.notNil(request.body.data.due_date))
+                    req_item.due_date = new GlideDateTime(request.body.data.due_date).getValue();
+
+                if (JSUtil.notNil(request.body.data.comments.toString())) {
+                    req_item.comments.setJournalEntry(request.body.data.comments.toString());
+                }
+                if (JSUtil.notNil(request.body.data.work_notes.toString())) {
+                    req_item.work_notes.setJournalEntry(request.body.data.work_notes.toString());
+                }
+
+                req_item.update();
+            }
+            var resPayload = {
+                "response": "Target record created successfully",
+                "sys_id": req_item.sys_id,
+                "number": req_item.number
+            };
+            return resPayload;
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : getRITMData : Error message ' + ex, 'CMS_EBONDING');
+        }
+    },
+
+    /*
+    Return Comment/Worknotes text
+    @Input _table {String} : Table name
+    @Input _recordId {String} : sys_id of record
+	@Input _element {String} : Comment/Worknotes
+    @Output response {String} : Comment/Worknotes text
+    */
+
+    getJournalEntry: function(_table, _recordId, _element) {
+        var journalEntry = new GlideRecord('sys_journal_field');
+        journalEntry.addEncodedQuery("name=" + _table + "^element=" + _element + "^element_id=" + _recordId + "^sys_created_onONLast minute@javascript:gs.beginningOfLastMinute()@javascript:gs.endOfLastMinute()");
+        journalEntry.orderByDesc('sys_created_on');
+        journalEntry.setLimit(1);
+        journalEntry.query();
+        if (journalEntry.next())
+            return journalEntry.getValue("value");
+        else
+            return "";
+    },
+
+
+    formatCatalogDescription: function(record) {
+        var ajaxDCOUtil = new AJAXDCOUtils();
+        var catVarVal = ajaxDCOUtil.getCatalogVariableValueAsString(record.sys_class_name, record.sys_id);
+        var recordDesc = record.description.toString();
+        var retVal;
+        var tempRetVal;
+        var cat_item;
+        if (record.sys_class_name == 'change_request') { // Set the catalog item reference to cat_item variable
+            cat_item = record.u_catalog_item;
+        } else {
+            cat_item = record.cat_item;
+        }
+
+        if (JSUtil.notNil(catVarVal)) {
+            tempRetVal = recordDesc + "\nPlease See Below for More information:\n" + catVarVal;
+        } else {
+            tempRetVal = recordDesc;
+        }
+        var multiRowVal = '';
+        var set_item = new GlideRecord('io_set_item');
+        set_item.addQuery('variable_set.type', 'one_to_many'); // Search for multi row variables for the catalog item
+        set_item.addQuery('sc_cat_item', cat_item.toString());
+        set_item.query();
+        while (set_item.next()) {
+            var name = set_item.variable_set.internal_name.toString(); // Get multi row variable set name dynamically
+            multiRowVal = multiRowVal + '' + record.variables[name];
+        }
+        if (JSUtil.notNil(multiRowVal)) {
+            retVal = tempRetVal + '\n' + multiRowVal;
+        } else {
+            retVal = tempRetVal;
+        }
+
+        return retVal;
+    },
+    /*
+    Called from this.createTaskPayload() function to send attachment which were attached before record is EBonded
+    @Input obj [GlideRecord object] : GlideRecord Object of EBonded record
+	 @obj correlation_id [String] : sys_id of records from Client Instance
+    */
+
+    sendPendingAttachment: function(obj, correlation_id) {
+        var _grAttachment = new GlideRecord('sys_attachment');
+        _grAttachment.addEncodedQuery('table_sys_id=' + obj.sys_id.toString());
+        _grAttachment.query();
+        while (_grAttachment.next()) {
+            this.sendAttachmentPayload(_grAttachment, _grAttachment.file_name.replace(/ /g, "%20"), obj, 'Insert Attachment');
+        }
+
+    },
+    /*
+    Called from this.sendPendingAttachment() function and "CMS_E-Bonding_Post_Attachment" Business Rule Created on sys_attachment table to send attachment to Client
+    @Input current [GlideRecord object] : GlideRecord Object of Attachment record
+	 @Input file [String] : Attachment name
+	  @Input taskObj [GlideRecord object] : GlideRecord Object of EBonded record
+	   @Input type [String] : Type of operation. Possible value is "Insert Attachment"
+    */
+    sendAttachmentPayload: function(current, file, taskObj, type) {
+        try {
+            var rest_message = '';
+            var map = this.getGlideRecordObj(this.REST_METHOD_MAPPING_TABLE, 'u_project=' + taskObj.u_dco_project_ref + '^u_rest_type=' + type);
+            if (map)
+                rest_message = map.u_rest_message.toString();
+
+            if (JSUtil.notNil(rest_message) && JSUtil.notNil(type)) {
+                var attach = new sn_ws.RESTMessageV2(rest_message, type); // Call end point
+                attach.setRequestHeader('Content-Type', current.content_type.toString()); // Content type handles the type of file
+                attach.setStringParameter('file_name', file); // Send the file name
+                attach.setStringParameter('table_sys_id', taskObj.correlation_id.toString()); // Send the sys_id of the record to which attachment has to be attached
+                attach.setStringParameter('table_name', current.table_name.toString()); // Name of the table on which record is available
+
+                attach.setRequestBodyFromAttachment(current.sys_id);
+                var response = attach.execute();
+                var responseBody = response.getBody();
+                var httpStatus = response.getStatusCode();
+                var parser = new JSON.parse(responseBody);
+                current.u_correlation_id = parser.result.sys_id;
+                return httpStatus;
+            }
+        } catch (ex) {
+            var message = ex.getMessage();
+            gs.log('Attachment Exception ' + ex + ' msg ' + message, 'Ebonding');
+        }
+    },
+    /*
+    Called from "CMS_E-Bonding_Delete_Attachment" Business Rule Created on sys_attachment table to delete attachment in Client
+    @Input current [GlideRecord object] : GlideRecord Object of Attachment record
+	  @Input taskObj [GlideRecord object] : GlideRecord Object of EBonded record
+	   @Input type [String] : Type of operation. Possible value is "Delete Attachment"
+    */
+
+    deleteAttachmentPayload: function(current, taskObj, type) {
+        try {
+            var rest_message = '';
+            var map = this.getGlideRecordObj(this.REST_METHOD_MAPPING_TABLE, 'u_project=' + taskObj.u_dco_project_ref + '^u_rest_type=' + type);
+            if (map)
+                rest_message = map.u_rest_message.toString();
+
+            if (JSUtil.notNil(rest_message) && JSUtil.notNil(type)) {
+                var attachmentSysID = current.sys_id.toString();
+                if (!current.u_correlation_id.nil())
+                    attachmentSysID = current.u_correlation_id;
+
+                var del = new sn_ws.RESTMessageV2(rest_message, type);
+                del.setStringParameter('sys_id', attachmentSysID); //Pass the sys_id of the attachment that has to be deleted
+                var res = del.execute();
+                var resBody = res.getBody();
+                var status = res.getStatusCode();
+            }
+        } catch (ex) {
+            gs.log('Delete Attachment Exception ' + ex, 'Ebonding');
+        }
+    },
+    /*
+    Called from this.parseTaskPayload() function to create CMDB CI record with the payload recived from client
+    @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+	@Input response [Object] : HTTP Response object to create response send back to Client
+	 @Output response [Object] : Return Response Body with HTTP Status code
+    */
+    createCMDBPayload: function(request, response) { // This function is called to create a new task record
+
+
+        var tableName, projKey, target, project, user;
+        tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+        projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+        user = request.pathParams.user.toString(); // Contains user id through which integration is established
+        project = this.getGlideRecordObj('u_dco_projects', 'u_number=' + projKey);
+        if (project)
+            project = project.sys_id.toString();
+
+        try {
+            var g_table = new GlideRecord(tableName); // GlideREcord on the relevant table to insert the record
+            g_table.initialize();
+            g_table.sys_class_name = request.body.data.sys_class_name;
+            g_table.name = request.body.data.name;
+            g_table.short_description = request.body.data.short_description;
+            g_table.operational_status = request.body.data.operational_status;
+            g_table.ip_address = request.body.data.ip_address;
+            //g_table.state = request.body.data.state;
+            g_table.u_ebonding_id = request.body.data.sys_id;
+            g_table.correlation_id = request.body.data.correlation_id;
+            g_table.u_project_name = project;
+            target = g_table.insert();
+
+            var resPay = {
+                "response": "CI record created successfully",
+                "cms_sys_id": target
+            }; // Custom response payload that contains sys id and number of the record created
+            return resPay;
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : createCMDBPayload : Error message ' + ex, 'CMS_EBONDING');
+        }
+    },
+    /*
+    Called from this.parseUpdateTask() function to update CMDB CI record with the payload recived from client
+    @Input request [Object] : HTTP Request object to read Query parameter and Request Payload
+	@Input response [Object] : HTTP Response object to create response send back to Client
+	 @Output response [Object] : Return Response Body with HTTP Status code
+    */
+
+    updateCMDBPayload: function(request, response) { // This function is called to create a new task record
+
+        try {
+            var tableName, projKey, id, comment, work_note;
+            tableName = request.pathParams.tableName; // Contains table name on which record has to be created
+            projKey = request.pathParams.projKey; // Contains the project key, this is used to set the relevant project name on the record
+            id = request.pathParams.id; // Sys id of the task record that has to be updated
+
+            var glide_table = this.getGlideRecordObj(tableName, 'sys_id=' + id);
+
+            glide_table.name = request.body.data.name;
+            glide_table.short_description = request.body.data.short_description;
+            glide_table.operational_status = request.body.data.operational_status;
+            glide_table.ip_address = request.body.data.ip_address;
+            glide_table.correlation_id = request.body.data.correlation_id;
+
+            glide_table.update();
+
+            var resPay = {
+                "response": "CI record updated successfully"
+            }; // Custom response payload that contains sys id and number of the record created
+            return resPay;
+        } catch (ex) {
+            gs.log('INBOUND : cms_serverUtils : updateCMDBPayload : Error message ' + ex, 'CMS_EBONDING');
+        }
+    },
+    /***
+    @description : checkIncidentEbonding accepts two parameters as priority and integration type and returns boolean value of true or false based on which ebonding business rules gets executed and an OBM is sent out.
+    @return true = if its an ebonding project and categoy selected is one of the allowed ebonding categories.
+    @return false = if its not an ebonding project or if category selected is not one of the allowed ebonding categories.
+
+    ***/
+    checkIncidentEbonding: function(priority, integrationType) {
+        var projectID = this.current.u_project_name.toString();
+        priority = priority == true ? priority : this.current.getDisplayValue('priority');
+        var category = this.current.getDisplayValue('category');
+        var flag = false;
+        var inc = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + this.current.u_project_name.toString() + '^u_integration_type=' + integrationType);
+        // var inc = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + this.current.u_project_name.toString());
+        if (inc && !gs.nil(category)) {
+            if (inc.u_incident_e_bonding_required) {
+                var priorityAllowed = this.checkEbondedIncidentPriorities(priority, inc);
+                if (priorityAllowed) {
+                    var allowedCategories = inc.u_incident_category.getDisplayValue().split(",");
+                    for (var i = 0; i < allowedCategories.length; i++) {
+                        if (allowedCategories[i].trim() == category.trim()) {
+                            flag = true;
+                            break;
+                        }
+                    }
+                    return flag;
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    },
+
+    //@DESCRIPTION : This function checks if the priority on the ticket is allowed to be ebonded for a particular project. 
+    // returns true or false based on the allowed priority values from ebonding configurations table.
+
+    checkEbondedIncidentPriorities: function(priority, inc) {
+        var flag = false;
+        if (priority != true) {
+
+            var allowedPriorities = inc.u_incident_priorities.getDisplayValue().split(",");
+            for (var i = 0; i < allowedPriorities.length; i++) {
+                if (allowedPriorities[i].trim() == priority.trim()) {
+                    flag = true;
+                    break;
+                }
+            }
+        } else {
+            flag = true;
+        }
+        return flag;
+    },
+    //@description : This function looks for the ebonding project and also the category selected is one of the allowed category or not in the ebonding configurations table and also if the type selected is one of the allowed types or not, returns true or false based on the check to ensure ebonding whether to be established or not.getContentType @return - bool (true or false) @inputs - ProjectId - project selected on the change request
+
+    checkChangeEbonding: function(integrationType) {
+        //Get Created by user gliderecord
+
+        var usr = this.getGlideRecordObj('sys_user', 'user_name=' + this.current.sys_created_by);
+        var selectedCategory = false;
+        var selectedType = false;
+        var category = this.current.getDisplayValue('category') || this.current.category.toString();
+        var type = this.current.getDisplayValue('type');
+
+        var cr = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + this.current.u_project_name.toString() + '^u_integration_type=' + integrationType);
+        // var cr = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + this.current.u_project_name.toString());
+        if (cr) {
+
+            if (cr.u_change_e_bonding_required) {
+
+                var allowedCategories = cr.u_change_category.getDisplayValue().split(",");
+                var allowedTypes = cr.u_change_types.getDisplayValue().split(",");
+
+                for (var i = 0; i < allowedCategories.length; i++) {
+
+                    if (allowedCategories[i].trim() == category.trim()) {
+                        selectedCategory = true;
+                        break;
+                    }
+                }
+
+                for (var j = 0; j < allowedTypes.length; j++) {
+                    if (allowedTypes[j].trim() == type.trim() || usr.u_ebonding_user == true) {
+                        selectedType = true;
+                        break;
+                    }
+                }
+
+                if (selectedCategory == true && selectedType == true) {
+                    return true;
+                }
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    },
+
+    checkChangeTaskEbonding: function(integrationType) {
+        var ctask = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + this.current.u_dco_project_ref.toString() + '^u_integration_type=' + integrationType);
+        //var ctask = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + this.current.u_dco_project_ref.toString());
+
+        if (ctask) {
+            if (ctask.u_change_task_e_bonding_required) {
+                return true;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    },
+
+    checkRequestEbonding: function(integrationType) {
+
+        var ritm = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + this.current.u_dco_project_name.toString() + '^u_integration_type=' + integrationType);
+        // var ritm = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + this.current.u_dco_project_name.toString());
+        if (ritm) {
+            if (ritm.u_request_e_bonding_required) {
+                return true;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    },
+
+    checkSCTaskEbonding: function(integrationType) {
+        var sctask = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + this.current.u_dco_project_ref.toString() + '^u_integration_type=' + integrationType);
+        // var sctask = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + this.current.u_dco_project_ref.toString());
+
+        if (sctask) {
+            if (sctask.u_sc_task_e_bonding_required) {
+                return true;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    },
+
+    checkChangeClientApprovalRequired: function(projectID) {
+
+        var ctask = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + projectID);
+        if (ctask) {
+            if (ctask.u_client_approval_required) {
+                return true;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    },
+
+    checkChangeClientApproval_Before_After: function(projectID) {
+
+        var ctask = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + projectID);
+        if (ctask) {
+            if (ctask.u_client_approval_required) {
+
+                if (ctask.u_client_approval_before_after == "after_cms_approval") {
+
+
+                    return "After";
+                } else if (ctask.u_client_approval_before_after == "before_cms_approval") {
+
+                    return "Before";
+                }
+
+            } else {
+                return "";
+            }
+        } else {
+            return "";
+        }
+    },
+    checkStandardChangeClientApprovalRequired: function(projectID) {
+
+        var stdchange = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + projectID);
+        if (stdchange) {
+            if (stdchange.u_client_approval_required_for_standard_cr) {
+                if (stdchange.u_change_types.indexOf('a7a27d53cb100200d71cb9c0c24c9c2f') > -1) {
+                    return true;
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    },
+
+    checkProjectHasInternalChanges: function(projectID) {
+
+        var ctask = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + projectID);
+        if (ctask) {
+            if (ctask.u_cms_internal_change) {
+                return true;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    },
+
+
+    checkOutboundLogForATFUpdate: function(chgSysID) {
+        var logRes = new GlideRecord('sys_outbound_http_log');
+
+        logRes.addEncodedQuery('sys_created_onONCurrent minute@javascript:gs.beginningOfCurrentMinute()@javascript:gs.endOfCurrentMinute()^ORsys_created_onONLast minute@javascript:gs.beginningOfLastMinute()@javascript:gs.endOfLastMinute()^urlLIKE' + chgSysID);
+        logRes.query();
+        if (logRes.next()) {
+            if (logRes.response_status == 200 || logRes.response_status == 201) {
+
+                return true;
+            } else return false;
+        } else return false;
+    },
+    checkProjectInEbondingConfig: function(projectID) {
+
+        var proj = new GlideRecord('u_e_bonding_configurations');
+        proj.get('u_project_name', projectID);
+        proj.query();
+
+        if (proj.next()) {
+            return true;
+        } else {
+            return false;
+        }
+    },
+    checkRequestEbondingOutbound: function(integrationType) {
+
+        var ritm = this.getGlideRecordObj(this.EBOND_CONFIGURATION_TABLE, 'u_project_name=' + this.current.u_dco_project_ref + '^u_integration_type=' + integrationType);
+        if (ritm) {
+            if (ritm.u_request_e_bonding_cms_originated) {
+                return true;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    },
+    type: 'cms_serverUtils'
+};
+
+
+
+=========================Scripted Rest API=======
+
+
+(function process( /*RESTAPIRequest*/ request, /*RESTAPIResponse*/ response) {
+    JSUtil.logObject('INBOUND : Montefire : parseTaskPayload : Table : ' + request.pathParams.objectType + ' Request Payload : ' + request.body);
+    // implement resource here
+    var objectType = request.pathParams.objectType;
+    //gs.log("Montefire Ebonding ObjectType"+request.pathParams.objectType);
+    var projectKey = request.pathParams.projKey;
+    //gs.log("Montefire Ebonding ProjectKey"+request.pathParams.projKey);
+    //var eBondingUtil = new CMS_ebonding_util_non_servicenow();
+    if (objectType == 'incident') {
+        var inputs = {};
+        inputs['table_name'] = "incident"; // String 
+        var clientjson = request.body.dataString;
+        var cleanedJson = clientjson.replace(/[\r\n]+/g, '');
+        inputs['req_payload'] = cleanedJson; // JSON 
+        inputs['project_key'] = projectKey.toString();
+        inputs['action'] = "create";
+        var result = sn_fd.FlowAPI.getRunner().subflow('global.cms_inbound_inc_nonsnow_ebonding').inForeground().withInputs(inputs).run();
+        var outputs = result.getOutputs();
+        // Get Outputs:
+        // Note: outputs can only be retrieved when executing synchronously.
+        var res = outputs['response']; // String
+        if (res != "") {
+            response.setStatus(201);
+            response.setContentType('application/json');
+            var writer = response.getStreamWriter();
+            writer.writeString(JSON.stringify(res));
+        }
+    } else if (objectType == 'sc_req_item') {
+        var inputs = {};
+        inputs['table_name'] = "sc_req_item"; // String 
+        var clientjson = request.body.dataString;
+        var cleanedJson = clientjson.replace(/[\r\n]+/g, '');
+        inputs['req_payload'] = cleanedJson; // JSON 
+        //inputs['req_payload'] = request.body.dataString; // JSON 
+        inputs['project_key'] = projectKey.toString();
+        inputs['action'] = "create";
+        var result = sn_fd.FlowAPI.getRunner().subflow('sn_sforce_v2_spoke.mf_sr_inbound').inForeground().withInputs(inputs).run();
+        var outputs = result.getOutputs();
+        // Get Outputs:
+        // Note: outputs can only be retrieved when executing synchronously.
+        var res = outputs['response']; // String
+        if (res != "") {
+            response.setStatus(201);
+            response.setContentType('application/json');
+            var writer = response.getStreamWriter();
+            writer.writeString(JSON.stringify(res));
+        }
+    } else if (objectType == 'change_request') {
+        var inputs = {};
+        inputs['table_name'] = "change_request"; // String 
+        var clientjson = request.body.dataString;
+        var cleanedJson = clientjson.replace(/[\r\n]+/g, '');
+        inputs['req_payload'] = cleanedJson; // JSON 
+        //inputs['req_payload'] = request.body.dataString; // JSON 
+        inputs['project_key'] = projectKey.toString();
+        inputs['action'] = "create";
+        var result = sn_fd.FlowAPI.getRunner().subflow('global.cms_inbound_chg_nonsnow_ebonding').inForeground().withInputs(inputs).run();
+        var outputs = result.getOutputs();
+        // Get Outputs:
+        // Note: outputs can only be retrieved when executing synchronously.
+        var res = outputs['response']; // String
+        if (res != "") {
+            response.setStatus(201);
+            response.setContentType('application/json');
+            var writer = response.getStreamWriter();
+            writer.writeString(JSON.stringify(res));
+        }
+    } else if (objectType == 'change_task') {
+        var inputs = {};
+        inputs['table_name'] = "change_task"; // String 
+        var clientjson = request.body.dataString;
+        var cleanedJson = clientjson.replace(/[\r\n]+/g, '');
+        inputs['req_payload'] = cleanedJson; // JSON 
+        //inputs['req_payload'] = request.body.dataString; // JSON 
+        inputs['project_key'] = projectKey.toString();
+        inputs['action'] = "create";
+        var result = sn_fd.FlowAPI.getRunner().subflow('global.cms_inbound_change_task_nonsnow_ebonding_mf').inForeground().withInputs(inputs).run();
+        var outputs = result.getOutputs();
+        // Get Outputs:
+        // Note: outputs can only be retrieved when executing synchronously.
+        var res = outputs['response']; // String
+        if (res != "") {
+            response.setStatus(201);
+            response.setContentType('application/json');
+            var writer = response.getStreamWriter();
+            writer.writeString(JSON.stringify(res));
+        }
+    } else {
+        response.setStatus(404);
+        response.setContentType('application/json');
+        response.setBody("{'result' : 'Provided objectType parameter doesn't exist'}");
+    }
+})(request, response);
+
+
